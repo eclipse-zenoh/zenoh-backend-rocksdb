@@ -62,7 +62,6 @@ lazy_static::lazy_static! {
     static ref MIN_DELAY_BEFORE_REMOVAL: NTP64 = NTP64::from(Duration::new(5, 0));
 }
 
-
 pub(crate) enum OnClosure {
     DestroyDB,
     DoNothing,
