@@ -55,12 +55,13 @@ const MAX_VAL_LEN: usize = 1 + 8 + 8 + uhlc::ID::MAX_SIZE;
 // minimum size of serialized data-info: deleted (u8) + encoding (u64) + timestamp (u64 + ID at 1 byte)
 const MIN_VAL_LEN: usize = 1 + 8 + 8 + uhlc::ID::MAX_SIZE;
 
+const GIT_VERSION: &str = git_version::git_version!(prefix = "v", cargo_prefix = "v");
 lazy_static::lazy_static! {
+    static ref LONG_VERSION: String = format!("{} built with {}", GIT_VERSION, env!("RUSTC_VERSION"));
     static ref GC_PERIOD: Duration = Duration::new(5, 0);
     static ref MIN_DELAY_BEFORE_REMOVAL: NTP64 = NTP64::from(Duration::new(5, 0));
 }
 
-const VERSION: &str = git_version::git_version!(prefix = "v", cargo_prefix = "v");
 
 pub(crate) enum OnClosure {
     DestroyDB,
@@ -72,7 +73,7 @@ pub fn create_backend(_unused: &Properties) -> ZResult<Box<dyn Backend>> {
     // For some reasons env_logger is sometime not active in a loaded library.
     // Try to activate it here, ignoring failures.
     let _ = env_logger::try_init();
-    debug!("RocksDB backend {}", VERSION);
+    debug!("RocksDB backend {}", LONG_VERSION.as_str());
 
     let root = if let Some(dir) = std::env::var_os(SCOPE_ENV_VAR) {
         PathBuf::from(dir)
@@ -83,7 +84,7 @@ pub fn create_backend(_unused: &Properties) -> ZResult<Box<dyn Backend>> {
     };
     let mut properties = Properties::default();
     properties.insert("root".into(), root.to_string_lossy().into());
-    properties.insert("version".into(), VERSION.into());
+    properties.insert("version".into(), LONG_VERSION.clone());
 
     let admin_status = zenoh::utils::properties_to_json_value(&properties);
     Ok(Box::new(RocksdbBackend { admin_status, root }))
