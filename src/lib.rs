@@ -53,7 +53,7 @@ const CF_DATA_INFO: &str = "data_info";
 // maximum size of serialized data-info: deleted (u8) + encoding (u64) + timestamp (u64 + ID at max size)
 const MAX_VAL_LEN: usize = 1 + 8 + 8 + uhlc::ID::MAX_SIZE;
 // minimum size of serialized data-info: deleted (u8) + encoding (u64) + timestamp (u64 + ID at 1 byte)
-const MIN_VAL_LEN: usize = 1 + 8 + 8 + uhlc::ID::MAX_SIZE;
+const MIN_VAL_LEN: usize = 1 + 8 + 8 + 1;
 
 const GIT_VERSION: &str = git_version::git_version!(prefix = "v", cargo_prefix = "v");
 lazy_static::lazy_static! {
