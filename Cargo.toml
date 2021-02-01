@@ -29,11 +29,11 @@ crate-type = ["cdylib"]
 zenoh_backend_traits = { git = "https://github.com/eclipse-zenoh/zenoh.git" }
 zenoh = { git = "https://github.com/eclipse-zenoh/zenoh.git" }
 zenoh-util = { git = "https://github.com/eclipse-zenoh/zenoh.git" }
-async-std = { version = "=1.8.0", features = ["unstable"] }
-async-trait = "0.1.38"
+async-std = "=1.9.0"
+async-trait = "0.1.42"
 uhlc = "0.2.1"
 lazy_static = "1.4.0"
-env_logger = "0.7.1"
+env_logger = "0.8.2"
 log = "0.4"
 git-version = "0.3.4"
 rocksdb = "0.15.0"
