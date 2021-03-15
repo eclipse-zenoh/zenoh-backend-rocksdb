@@ -261,7 +261,7 @@ impl Storage for RocksdbStorage {
 
         // Store or delete the sample depending the ChangeKind
         match change.kind {
-            ChangeKind::PUT => {
+            ChangeKind::Put => {
                 if !self.read_only {
                     // check that there is a value for this PUT sample
                     if change.value.is_none() {
@@ -283,7 +283,7 @@ impl Storage for RocksdbStorage {
                     Ok(())
                 }
             }
-            ChangeKind::DELETE => {
+            ChangeKind::Delete => {
                 if !self.read_only {
                     // delete file
                     delete_kv(&db, key, change.timestamp)
@@ -292,7 +292,7 @@ impl Storage for RocksdbStorage {
                     Ok(())
                 }
             }
-            ChangeKind::PATCH => {
+            ChangeKind::Patch => {
                 warn!("Received PATCH for {}: not yet supported", change.path);
                 Ok(())
             }
