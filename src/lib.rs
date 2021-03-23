@@ -11,7 +11,6 @@
 // Contributors:
 //   ADLINK zenoh team, <zenoh@adlink-labs.tech>
 //
-#![feature(async_closure)]
 
 use async_std::sync::{Arc, Mutex};
 use async_trait::async_trait;
@@ -178,7 +177,7 @@ impl Backend for RocksdbBackend {
                 )
             })
         })?;
-        let db = Arc::new(Mutex::new(db));
+        let db = Arc::new(Mutex::new(Some(db)));
 
         let timer = if read_only {
             None
@@ -216,7 +215,7 @@ struct RocksdbStorage {
     on_closure: OnClosure,
     read_only: bool,
     // Note: rocksdb isn't thread-safe. See https://github.com/rust-rocksdb/rust-rocksdb/issues/404
-    db: Arc<Mutex<DB>>,
+    db: Arc<Mutex<Option<DB>>>,
     // Note: Timer is kept to not be dropped and keep the GC periodic event running
     #[allow(dead_code)]
     timer: Option<Timer>,
@@ -248,7 +247,8 @@ impl Storage for RocksdbStorage {
             })?;
 
         // Get lock on DB
-        let db = self.db.lock().await;
+        let db_cell = self.db.lock().await;
+        let db = db_cell.as_ref().unwrap();
 
         // get latest timestamp for this key (if already exists in db)
         // and drop incoming sample if older
@@ -313,7 +313,8 @@ impl Storage for RocksdbStorage {
         );
 
         // Get lock on DB
-        let db = self.db.lock().await;
+        let db_cell = self.db.lock().await;
+        let db = db_cell.as_ref().unwrap();
 
         // Get all matching keys/values
         let mut kvs: Vec<(String, Vec<u8>, ZInt, Timestamp)> = Vec::with_capacity(path_exprs.len());
@@ -338,7 +339,7 @@ impl Storage for RocksdbStorage {
         }
 
         // Release lock on DB
-        drop(db);
+        drop(db_cell);
 
         // Send replies
         for (key, payload, encoding, timestamp) in kvs {
@@ -369,9 +370,26 @@ impl Storage for RocksdbStorage {
 impl Drop for RocksdbStorage {
     fn drop(&mut self) {
         async_std::task::block_on(async move {
-            // Get lock on DB
-            let db = self.db.lock().await;
-            let path = db.path();
+            // Get lock on DB and take DB so we can drop it before destroying it
+            // (avoiding RocksDB lock to be taken twice)
+            let mut db_cell = self.db.lock().await;
+            let db = db_cell.take().unwrap();
+
+            // Stop GC
+            if let Some(t) = &mut self.timer {
+                t.stop().await;
+            }
+
+            // Flush all
+            if let Err(err) = db.flush() {
+                warn!("Closing Rocksdb storage, flush failed: {}", err);
+            }
+
+            // copy path for later use after DB is dropped
+            let path = db.path().to_path_buf();
+
+            // drop DB, releasing RocksDB lock
+            drop(db);
 
             match self.on_closure {
                 OnClosure::DestroyDB => {
@@ -577,7 +595,7 @@ pub(crate) fn concat_str<S1: AsRef<str>, S2: AsRef<str>>(s1: S1, s2: S2) -> Stri
 
 // Periodic event cleaning-up data info for no-longer existing files
 struct GarbageCollectionEvent {
-    db: Arc<Mutex<DB>>,
+    db: Arc<Mutex<Option<DB>>>,
 }
 
 #[async_trait]
@@ -586,12 +604,15 @@ impl Timed for GarbageCollectionEvent {
         trace!("Start garbage collection of obsolete data-infos");
         let time_limit = NTP64::from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap())
             - *MIN_DELAY_BEFORE_REMOVAL;
-        let db = self.db.lock().await;
+
+        // Get lock on DB
+        let db_cell = self.db.lock().await;
+        let db = db_cell.as_ref().unwrap();
+
+        // prepare a batch with all keys to delete
         let cf_handle = db.cf_handle(CF_DATA_INFO).unwrap();
         let mut batch = WriteBatch::default();
         let mut count = 0;
-
-        // prepare a batch with all keys to delete
         for (key, buf) in db.iterator_cf(cf_handle, IteratorMode::Start) {
             if let Ok(true) = decode_deleted_flag(&buf) {
                 if let Ok(timestamp) = decode_timestamp(&buf) {
