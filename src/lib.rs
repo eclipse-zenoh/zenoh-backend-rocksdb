@@ -353,6 +353,7 @@ impl Storage for RocksdbStorage {
                 timestamp: Some(timestamp),
                 kind: None,
                 encoding: Some(encoding),
+                is_shm: false,
             };
             query
                 .reply(Sample {
