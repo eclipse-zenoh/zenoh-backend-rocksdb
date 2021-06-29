@@ -38,7 +38,7 @@ git-version = "0.3.4"
 rocksdb = "0.16.0"
 
 [build-dependencies]
-rustc_version = "0.3"
+rustc_version = "0.4.0"
 
 [package.metadata.deb]
 name = "zenoh-backend-rocksdb"

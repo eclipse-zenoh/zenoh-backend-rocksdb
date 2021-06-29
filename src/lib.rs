@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uhlc::NTP64;
 use zenoh::net::utils::resource_name;
-use zenoh::net::{DataInfo, RBuf, Sample, ZInt};
+use zenoh::net::{DataInfo, Sample, ZBuf, ZInt};
 use zenoh::{
     Change, ChangeKind, Properties, Selector, Timestamp, Value, ZError, ZErrorKind, ZResult,
 };
@@ -273,7 +273,7 @@ impl Storage for RocksdbStorage {
                         });
                     }
 
-                    // get the encoding and buffer from the value (RawValue => direct access to inner RBuf)
+                    // get the encoding and buffer from the value (RawValue => direct access to inner ZBuf)
                     let (encoding, payload) = change.value.unwrap().encode();
 
                     // put payload and data_info in DB
@@ -345,21 +345,14 @@ impl Storage for RocksdbStorage {
         for (key, payload, encoding, timestamp) in kvs {
             // append path_prefix to the key
             let path = concat_str(&self.path_prefix, &key);
-            let data_info = DataInfo {
-                source_id: None,
-                source_sn: None,
-                first_router_id: None,
-                first_router_sn: None,
-                timestamp: Some(timestamp),
-                kind: None,
-                encoding: Some(encoding),
-                is_shm: false,
-            };
+            let mut info = DataInfo::new();
+            info.encoding = Some(encoding);
+            info.timestamp = Some(timestamp);
             query
                 .reply(Sample {
                     res_name: path,
                     payload: payload.into(),
-                    data_info: Some(data_info),
+                    data_info: Some(info),
                 })
                 .await;
         }
@@ -417,13 +410,13 @@ impl Drop for RocksdbStorage {
     }
 }
 
-fn put_kv(db: &DB, key: &str, content: RBuf, encoding: ZInt, timestamp: Timestamp) -> ZResult<()> {
+fn put_kv(db: &DB, key: &str, content: ZBuf, encoding: ZInt, timestamp: Timestamp) -> ZResult<()> {
     trace!("Put key {} in {:?}", key, db);
     let data_info = encode_data_info(encoding, timestamp, false)?;
 
     // Write content and encoding+timestamp in different Column Families
     let mut batch = WriteBatch::default();
-    batch.put_cf(db.cf_handle(CF_PAYLOADS).unwrap(), key, content.get_vec());
+    batch.put_cf(db.cf_handle(CF_PAYLOADS).unwrap(), key, content.to_vec());
     batch.put_cf(db.cf_handle(CF_DATA_INFO).unwrap(), key, data_info);
     db.write(batch).map_err(rocksdb_err_to_zerr)
 }
