@@ -416,7 +416,11 @@ fn put_kv(db: &DB, key: &str, content: ZBuf, encoding: ZInt, timestamp: Timestam
 
     // Write content and encoding+timestamp in different Column Families
     let mut batch = WriteBatch::default();
-    batch.put_cf(db.cf_handle(CF_PAYLOADS).unwrap(), key, content.to_vec());
+    batch.put_cf(
+        db.cf_handle(CF_PAYLOADS).unwrap(),
+        key,
+        content.contiguous(),
+    );
     batch.put_cf(db.cf_handle(CF_DATA_INFO).unwrap(), key, data_info);
     db.write(batch).map_err(rocksdb_err_to_zerr)
 }
