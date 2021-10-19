@@ -30,8 +30,8 @@ Using `curl` on the zenoh router to add backend and storages:
 curl -X PUT -H 'content-type:application/properties' http://localhost:8000/@/router/local/plugin/storages/backend/rocksdb
 
 # Add a storage on /demo/example/** storing data in a ${ZBACKEND_ROCKSDB_ROOT}/test RocksDB database.
-# We use 'path_prefix=/demo/example' thus a zenoh path "/demo/example/a/b" will be stored using "a/b" as key in RocksDB
-curl -X PUT -H 'content-type:application/properties' -d "path_expr=/demo/example/**;path_prefix=/demo/example;dir=test;create_db" http://localhost:8000/@/router/local/plugin/storages/backend/rocksdb/storage/example
+# We use 'key_prefix=/demo/example' thus a zenoh key "/demo/example/a/b" will be stored using "a/b" as key in RocksDB
+curl -X PUT -H 'content-type:application/properties' -d "key_expr=/demo/example/**;key_prefix=/demo/example;dir=test;create_db" http://localhost:8000/@/router/local/plugin/storages/backend/rocksdb/storage/example
 
 # Put values that will be stored in the RocksDB database
 curl -X PUT -d "TEST-1" http://localhost:8000/demo/example/test-1
@@ -49,10 +49,10 @@ curl http://localhost:8000/demo/example/**
 -------------------------------
 ## **Properties for Storage creation**
 
-- **`"path_expr"`** (**required**) : the Storage's [Path Expression](../abstractions#path-expression)
+- **`"key_expr"`** (**required**) : the Storage's [Key Expression](../abstractions#key-expression)
 
-- **`"path_prefix"`** (optional) : a prefix of the `"path_expr"` that will be stripped from each path to store.  
-  _Example: with `"path_expr"="/demo/example/**"` and `"path_prefix"="/demo/example/"` the path `"/demo/example/foo/bar"` will be stored as key: `"foo/bar"`. But replying to a get on `"/demo/**"`, the key `"foo/bar"` will be transformed back to the original path (`"/demo/example/foo/bar"`)._
+- **`"key_prefix"`** (optional) : a prefix of the `"key_expr"` that will be stripped from each key to store.  
+  _Example: with `"key_expr"="/demo/example/**"` and `"key_prefix"="/demo/example/"` the key `"/demo/example/foo/bar"` will be stored as key: `"foo/bar"`. But replying to a get on `"/demo/**"`, the key `"foo/bar"` will be transformed back to the original key (`"/demo/example/foo/bar"`)._
 
 - **`"dir"`** (**required**) : The name of directory where the RocksDB database is stored.
   The absolute path will be `${ZBACKEND_ROCKSDB_ROOT}/<dir>`.
@@ -75,19 +75,19 @@ Each **storage** will map to a RocksDB database stored in directory: `${ZBACKEND
      If this variable is not specified `${ZENOH_HOME}/zbackend_rocksdb` will be used
      (where the default value of `${ZENOH_HOME}` is `~/.zenoh`).
   * `<dir>` is the `"dir"` property specified at storage creation.
-Each zenoh **path/value** put into the storage will map to 2 **key/values** in the database:
-  * For both, the key is the zenoh path, stripped from the `"path_prefix"` property specified at storage creation.
+Each zenoh **key/value** put into the storage will map to 2 **key/values** in the database:
+  * For both, the database key is the zenoh key, stripped from the `"key_prefix"` property specified at storage creation.
   * In the `"default"` [Column Family](https://github.com/facebook/rocksdb/wiki/Column-Families) the key is
     put with the zenoh encoded value as a value.
   * In the `"data_info"` [Column Family](https://github.com/facebook/rocksdb/wiki/Column-Families) the key is
-    put with a value encoded as following:
-      - bytes[0]:     the "deleted" flag as a u8 (1=true, 0=false)
-      - bytes[1..9]:  the zenoh encoding flag as a u64
-      - bytes[9..17]: the timestamp's time as a u64
-      - bytes[17..]:  the timestamp's ID
+    put with a bytes buffer encoded in this order:
+      - the Timestamp encoded as: 8 bytes for the time + 16 bytes for the HLC ID
+      - a "is deleted" flag encoded as a boolean on 1 byte
+      - the encoding prefix flag encoded as a ZInt (variable length)
+      - the encoding suffix encoded as a String (string length as a ZInt + string bytes without ending `\0`)
 
 ### Behaviour on deletion
-On deletion of a path, the corresponding key is removed from the `"default"` Column Family. An entry with the
+On deletion of a key, the corresponding key is removed from the `"default"` Column Family. An entry with the
 "deletion" flag set to true and the deletion timestamp is inserted in the `"data-info"` Column Family
 (to avoid re-insertion of points with an older timestamp in case of un-ordered messages).  
 At regular interval, a task cleans-up the `"data-info"` Column Family from entries with old timestamps and
@@ -95,9 +95,9 @@ the "deletion" flag set to true
 
 ### Behaviour on GET
 On GET operations:
-  * if the selector is a path (i.e. not containing any `'*'`): the value and its encoding and timestamp
+  * if the selector is a unique key (i.e. not containing any `'*'`): the value and its encoding and timestamp
     for the corresponding key are directly retrieved from the 2 Column Families using `get` RocksDB operation.
-  * otherwise: the storage searches for matching keys, leveraging RocksDB's [Prefix Seek](https://github.com/facebook/rocksdb/wiki/Prefix-Seek) if possible to minimize the number of entries to check.
+  * if the selector is a key expression: the storage searches for matching keys, leveraging RocksDB's [Prefix Seek](https://github.com/facebook/rocksdb/wiki/Prefix-Seek) if possible to minimize the number of entries to check.
 
 
 -------------------------------

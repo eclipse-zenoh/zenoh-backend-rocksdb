@@ -91,14 +91,14 @@ impl Backend for RocksdbBackend {
     }
 
     async fn create_storage(&mut self, props: Properties) -> ZResult<Box<dyn Storage>> {
-        let path_expr = props.get(PROP_STORAGE_PATH_EXPR).unwrap();
+        let path_expr = props.get(PROP_STORAGE_KEY_EXPR).unwrap();
         let path_prefix = props
-            .get(PROP_STORAGE_PATH_PREFIX)
+            .get(PROP_STORAGE_KEY_PREFIX)
             .ok_or_else(|| {
                 zerror2!(ZErrorKind::Other {
                     descr: format!(
                         r#"Missing required property for File System Storage: "{}""#,
-                        PROP_STORAGE_PATH_PREFIX
+                        PROP_STORAGE_KEY_PREFIX
                     )
                 })
             })?
@@ -107,7 +107,7 @@ impl Backend for RocksdbBackend {
             return zerror!(ZErrorKind::Other {
                 descr: format!(
                     r#"The specified "{}={}" is not a prefix of "{}={}""#,
-                    PROP_STORAGE_PATH_PREFIX, path_prefix, PROP_STORAGE_PATH_EXPR, path_expr
+                    PROP_STORAGE_KEY_PREFIX, path_prefix, PROP_STORAGE_KEY_EXPR, path_expr
                 )
             });
         }
@@ -526,7 +526,7 @@ fn encode_data_info(encoding: &Encoding, timestamp: &Timestamp, deleted: bool) -
 }
 
 fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
-    let mut buf = ZBuf::from(buf);
+    let mut buf = ZBuf::from(buf.to_vec());
     let timestamp = buf.read_timestamp().ok_or_else(|| {
         zerror2!(ZErrorKind::Other {
             descr: "Failed to decode data-info (timestamp)".to_string()
@@ -559,7 +559,7 @@ fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
 
 // decode the timestamp only
 fn decode_timestamp(buf: &[u8]) -> ZResult<Timestamp> {
-    let mut buf = ZBuf::from(buf);
+    let mut buf = ZBuf::from(buf.to_vec());
     let timestamp = buf.read_timestamp().ok_or_else(|| {
         zerror2!(ZErrorKind::Other {
             descr: "Failed to decode data-info (timestamp)".to_string()
@@ -570,7 +570,7 @@ fn decode_timestamp(buf: &[u8]) -> ZResult<Timestamp> {
 
 // decode the deleted flag only
 fn decode_deleted_flag(buf: &[u8]) -> ZResult<bool> {
-    let mut buf = ZBuf::from(buf);
+    let mut buf = ZBuf::from(buf.to_vec());
 
     let _timestamp = buf.read_timestamp().ok_or_else(|| {
         zerror2!(ZErrorKind::Other {
