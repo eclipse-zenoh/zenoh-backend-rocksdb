@@ -22,6 +22,7 @@ use uhlc::NTP64;
 use zenoh::buf::{WBuf, ZBuf};
 use zenoh::prelude::*;
 use zenoh::time::{new_reception_timestamp, Timestamp};
+use zenoh_backend_traits::config::{BackendConfig, StorageConfig};
 use zenoh_backend_traits::*;
 use zenoh_util::collections::{Timed, TimedEvent, Timer};
 use zenoh_util::{zenoh_home, zerror, zerror2};
@@ -57,8 +58,11 @@ pub(crate) enum OnClosure {
     DoNothing,
 }
 
+#[allow(dead_code)]
+const CREATE_BACKEND_TYPECHECK: CreateBackend = create_backend;
+
 #[no_mangle]
-pub fn create_backend(_unused: &Properties) -> ZResult<Box<dyn Backend>> {
+pub extern "C" fn create_backend(_unused: BackendConfig) -> ZResult<Box<dyn Backend>> {
     // For some reasons env_logger is sometime not active in a loaded library.
     // Try to activate it here, ignoring failures.
     let _ = env_logger::try_init();
@@ -90,67 +94,73 @@ impl Backend for RocksdbBackend {
         self.admin_status.clone()
     }
 
-    async fn create_storage(&mut self, props: Properties) -> ZResult<Box<dyn Storage>> {
-        let path_expr = props.get(PROP_STORAGE_KEY_EXPR).unwrap();
-        let path_prefix = props
-            .get(PROP_STORAGE_KEY_PREFIX)
-            .ok_or_else(|| {
-                zerror2!(ZErrorKind::Other {
-                    descr: format!(
-                        r#"Missing required property for File System Storage: "{}""#,
-                        PROP_STORAGE_KEY_PREFIX
-                    )
-                })
-            })?
-            .clone();
+    async fn create_storage(&mut self, config: StorageConfig) -> ZResult<Box<dyn Storage>> {
+        let path_expr = config.key_expr.clone();
+        let path_prefix = config.truncate.clone();
         if !path_expr.starts_with(&path_prefix) {
             return zerror!(ZErrorKind::Other {
                 descr: format!(
-                    r#"The specified "{}={}" is not a prefix of "{}={}""#,
-                    PROP_STORAGE_KEY_PREFIX, path_prefix, PROP_STORAGE_KEY_EXPR, path_expr
+                    r#"The specified prefix="{}" is not a prefix of the key expression="{}""#,
+                    path_prefix, path_expr
                 )
             });
         }
 
-        let read_only = props.contains_key(PROP_STORAGE_READ_ONLY);
-
-        let on_closure = match props.get(PROP_STORAGE_ON_CLOSURE) {
-            Some(s) => {
-                if s == "destroy_db" {
-                    OnClosure::DestroyDB
-                } else {
-                    return zerror!(ZErrorKind::Other {
-                        descr: format!("Unsupported value for 'on_closure' property: {}", s)
-                    });
-                }
+        let read_only = match config.rest.get(PROP_STORAGE_READ_ONLY) {
+            None | Some(serde_json::Value::Bool(false)) => false,
+            Some(serde_json::Value::Bool(true)) => true,
+            _ => {
+                return zerror!(ZErrorKind::Other {
+                    descr: format!(
+                    "Optional property `{}` of rocksdb storage configurations must be a boolean",
+                    PROP_STORAGE_READ_ONLY
+                )
+                })
             }
-            None => OnClosure::DoNothing,
         };
 
-        let db_path = props
-            .get(PROP_STORAGE_DIR)
-            .map(|dir| {
-                // prepend db_path with self.root
-                let mut db_path = self.root.clone();
-                for segment in dir.split(std::path::MAIN_SEPARATOR) {
-                    if !segment.is_empty() {
-                        db_path.push(segment);
-                    }
-                }
-                db_path
-            })
-            .ok_or_else(|| {
-                zerror2!(ZErrorKind::Other {
+        let on_closure = match config.rest.get(PROP_STORAGE_ON_CLOSURE) {
+            Some(serde_json::Value::String(s)) if s == "destroy_db" => OnClosure::DestroyDB,
+            Some(serde_json::Value::String(s)) if s == "do_nothing" => OnClosure::DoNothing,
+            None => OnClosure::DoNothing,
+            _ => {
+                return zerror!(ZErrorKind::Other {
                     descr: format!(
-                        r#"Missing required property for File System Storage: "{}""#,
+                        r#"Optional property `{}` of rocksdb storage configurations must be either "do_nothing" (default) or "destroy_db""#,
+                        PROP_STORAGE_ON_CLOSURE
+                    )
+                })
+            }
+        };
+
+        let db_path = match config.rest.get(PROP_STORAGE_DIR) {
+            Some(serde_json::Value::String(dir)) => {
+                let mut db_path = self.root.clone();
+                db_path.push(dir);
+                db_path
+            }
+            _ => {
+                return zerror!(ZErrorKind::Other {
+                    descr: format!(
+                        r#"Required property `{}` for File System Storage must be a string"#,
                         PROP_STORAGE_DIR
                     )
                 })
-            })?;
+            }
+        };
 
         let mut opts = Options::default();
-        if props.contains_key(PROP_STORAGE_CREATE_DB) {
-            opts.create_if_missing(true);
+        match config.rest.get(PROP_STORAGE_CREATE_DB) {
+            Some(serde_json::Value::Bool(true)) => opts.create_if_missing(true),
+            Some(serde_json::Value::Bool(false)) | None => {}
+            _ => {
+                return zerror!(ZErrorKind::Other {
+                    descr: format!(
+                        r#"Optional property `{}` of rocksdb storage configurations must be a boolean"#,
+                        PROP_STORAGE_CREATE_DB
+                    )
+                })
+            }
         }
         opts.create_missing_column_families(true);
         let db = if read_only {
@@ -179,10 +189,8 @@ impl Backend for RocksdbBackend {
             let _ = t.add(gc).await;
             Some(t)
         };
-
-        let admin_status = zenoh::properties::properties_to_json_value(&props);
         Ok(Box::new(RocksdbStorage {
-            admin_status,
+            admin_status: config,
             path_prefix,
             on_closure,
             read_only,
@@ -191,17 +199,17 @@ impl Backend for RocksdbBackend {
         }))
     }
 
-    fn incoming_data_interceptor(&self) -> Option<Box<dyn IncomingDataInterceptor>> {
+    fn incoming_data_interceptor(&self) -> Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>> {
         None
     }
 
-    fn outgoing_data_interceptor(&self) -> Option<Box<dyn OutgoingDataInterceptor>> {
+    fn outgoing_data_interceptor(&self) -> Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>> {
         None
     }
 }
 
 struct RocksdbStorage {
-    admin_status: Value,
+    admin_status: StorageConfig,
     path_prefix: String,
     on_closure: OnClosure,
     read_only: bool,
@@ -215,7 +223,7 @@ struct RocksdbStorage {
 #[async_trait]
 impl Storage for RocksdbStorage {
     async fn get_admin_status(&self) -> Value {
-        self.admin_status.clone()
+        self.admin_status.to_json_value().into()
     }
 
     // When receiving a Sample (i.e. on PUT or DELETE operations)
@@ -241,7 +249,7 @@ impl Storage for RocksdbStorage {
         // get latest timestamp for this key (if already exists in db)
         // and drop incoming sample if older
         let sample_ts = sample.timestamp.unwrap_or_else(new_reception_timestamp);
-        if let Some(old_ts) = get_timestamp(&db, key)? {
+        if let Some(old_ts) = get_timestamp(db, key)? {
             if sample_ts < old_ts {
                 debug!(
                     "{} on {} dropped: out-of-date",
@@ -256,7 +264,7 @@ impl Storage for RocksdbStorage {
             SampleKind::Put => {
                 if !self.read_only {
                     // put payload and data_info in DB
-                    put_kv(&db, key, sample.value, sample_ts)
+                    put_kv(db, key, sample.value, sample_ts)
                 } else {
                     warn!("Received PUT for read-only DB on {:?} - ignored", key);
                     Ok(())
@@ -265,7 +273,7 @@ impl Storage for RocksdbStorage {
             SampleKind::Delete => {
                 if !self.read_only {
                     // delete file
-                    delete_kv(&db, key, sample_ts)
+                    delete_kv(db, key, sample_ts)
                 } else {
                     warn!("Received DELETE for read-only DB on {:?} - ignored", key);
                     Ok(())
@@ -299,10 +307,10 @@ impl Storage for RocksdbStorage {
         let mut kvs: Vec<(String, Value, Timestamp)> = Vec::with_capacity(sub_selectors.len());
         for sub_selector in sub_selectors {
             if sub_selector.contains('*') {
-                find_matching_kv(&db, &sub_selector, &mut kvs);
+                find_matching_kv(db, sub_selector, &mut kvs);
             } else {
                 // path_expr correspond to 1 key. Get it.
-                match get_kv(&db, &sub_selector) {
+                match get_kv(db, sub_selector) {
                     Ok(Some((value, timestamp))) => {
                         kvs.push((sub_selector.into(), value, timestamp))
                     }
