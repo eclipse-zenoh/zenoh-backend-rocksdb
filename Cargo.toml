@@ -30,9 +30,9 @@ zenoh = { git =  "https://github.com/eclipse-zenoh/zenoh" }
 zenoh-util = { git =  "https://github.com/eclipse-zenoh/zenoh" }
 async-std = "=1.9.0"
 async-trait = "0.1.42"
-uhlc = "0.3.1"
+uhlc = "0.4.0"
 lazy_static = "1.4.0"
-env_logger = "0.8.2"
+env_logger = "0.9.0"
 log = "0.4"
 git-version = "0.3.4"
 rocksdb = "0.16.0"
