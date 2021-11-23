@@ -230,8 +230,8 @@ impl Storage for RocksdbStorage {
     async fn on_sample(&mut self, sample: Sample) -> ZResult<()> {
         // the key in rocksdb is the path stripped from "path_prefix"
         let key = sample
-            .res_name
-            .as_str()
+            .key_expr
+            .try_as_str()?
             .strip_prefix(&self.path_prefix)
             .ok_or_else(|| {
                 zerror2!(ZErrorKind::Other {
@@ -253,7 +253,7 @@ impl Storage for RocksdbStorage {
             if sample_ts < old_ts {
                 debug!(
                     "{} on {} dropped: out-of-date",
-                    sample.kind, sample.res_name
+                    sample.kind, sample.key_expr
                 );
                 return Ok(());
             }
@@ -280,7 +280,7 @@ impl Storage for RocksdbStorage {
                 }
             }
             SampleKind::Patch => {
-                warn!("Received PATCH for {}: not yet supported", sample.res_name);
+                warn!("Received PATCH for {}: not yet supported", sample.key_expr);
                 Ok(())
             }
         }
@@ -293,7 +293,8 @@ impl Storage for RocksdbStorage {
 
         // get the list of sub-path expressions that will match the same stored keys than
         // the selector, if those keys had the path_prefix.
-        let sub_selectors = utils::get_sub_key_selectors(selector.key_selector, &self.path_prefix);
+        let sub_selectors =
+            utils::get_sub_key_selectors(selector.key_selector.try_as_str()?, &self.path_prefix);
         debug!(
             "Query on {} with path_prefix={} => sub_selectors = {:?}",
             selector.key_selector, self.path_prefix, sub_selectors
@@ -474,7 +475,7 @@ fn find_matching_kv(db: &DB, sub_selector: &str, results: &mut Vec<(String, Valu
     for (key, buf) in db.prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), prefix) {
         if let Ok(false) = decode_deleted_flag(&buf) {
             let key_str = String::from_utf8_lossy(&key);
-            if zenoh::utils::resource_name::intersect(&key_str, sub_selector) {
+            if zenoh::utils::key_expr::intersect(&key_str, sub_selector) {
                 match db.get_cf(db.cf_handle(CF_PAYLOADS).unwrap(), &key) {
                     Ok(Some(payload)) => {
                         if let Ok((encoding, timestamp, _)) = decode_data_info(&buf) {
