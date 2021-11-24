@@ -252,7 +252,7 @@ impl Storage for RocksdbStorage {
 
         // get latest timestamp for this key (if already exists in db)
         // and drop incoming sample if older
-        if let Some(old_ts) = get_timestamp(&db, key)? {
+        if let Some(old_ts) = get_timestamp(db, key)? {
             if change.timestamp < old_ts {
                 debug!("{} on {} dropped: out-of-date", change.kind, change.path);
                 return Ok(());
@@ -277,7 +277,7 @@ impl Storage for RocksdbStorage {
                     let (encoding, payload) = change.value.unwrap().encode();
 
                     // put payload and data_info in DB
-                    put_kv(&db, key, payload, encoding, change.timestamp)
+                    put_kv(db, key, payload, encoding, change.timestamp)
                 } else {
                     warn!("Received PUT for read-only DB on {:?} - ignored", key);
                     Ok(())
@@ -286,7 +286,7 @@ impl Storage for RocksdbStorage {
             ChangeKind::Delete => {
                 if !self.read_only {
                     // delete file
-                    delete_kv(&db, key, change.timestamp)
+                    delete_kv(db, key, change.timestamp)
                 } else {
                     warn!("Received DELETE for read-only DB on {:?} - ignored", key);
                     Ok(())
@@ -320,10 +320,10 @@ impl Storage for RocksdbStorage {
         let mut kvs: Vec<(String, Vec<u8>, ZInt, Timestamp)> = Vec::with_capacity(path_exprs.len());
         for path_expr in path_exprs {
             if path_expr.contains('*') {
-                find_matching_kv(&db, &path_expr, &mut kvs);
+                find_matching_kv(db, path_expr, &mut kvs);
             } else {
                 // path_expr correspond to 1 key. Get it.
-                match get_kv(&db, &path_expr) {
+                match get_kv(db, path_expr) {
                     Ok(Some((payload, encoding, timestamp))) => {
                         kvs.push((path_expr.into(), payload, encoding, timestamp))
                     }
