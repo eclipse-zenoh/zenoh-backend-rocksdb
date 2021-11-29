@@ -22,10 +22,11 @@ use uhlc::NTP64;
 use zenoh::buf::{WBuf, ZBuf};
 use zenoh::prelude::*;
 use zenoh::time::{new_reception_timestamp, Timestamp};
+use zenoh::Result as ZResult;
 use zenoh_backend_traits::config::{BackendConfig, StorageConfig};
 use zenoh_backend_traits::*;
 use zenoh_util::collections::{Timed, TimedEvent, Timer};
-use zenoh_util::{zenoh_home, zerror, zerror2};
+use zenoh_util::{bail, zenoh_home, zerror};
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
 pub const SCOPE_ENV_VAR: &str = "ZBACKEND_ROCKSDB_ROOT";
@@ -98,24 +99,21 @@ impl Backend for RocksdbBackend {
         let path_expr = config.key_expr.clone();
         let path_prefix = config.truncate.clone();
         if !path_expr.starts_with(&path_prefix) {
-            return zerror!(ZErrorKind::Other {
-                descr: format!(
-                    r#"The specified prefix="{}" is not a prefix of the key expression="{}""#,
-                    path_prefix, path_expr
-                )
-            });
+            bail!(
+                r#"The specified prefix="{}" is not a prefix of the key expression="{}""#,
+                path_prefix,
+                path_expr
+            )
         }
 
         let read_only = match config.rest.get(PROP_STORAGE_READ_ONLY) {
             None | Some(serde_json::Value::Bool(false)) => false,
             Some(serde_json::Value::Bool(true)) => true,
             _ => {
-                return zerror!(ZErrorKind::Other {
-                    descr: format!(
+                bail!(
                     "Optional property `{}` of rocksdb storage configurations must be a boolean",
                     PROP_STORAGE_READ_ONLY
                 )
-                })
             }
         };
 
@@ -124,12 +122,10 @@ impl Backend for RocksdbBackend {
             Some(serde_json::Value::String(s)) if s == "do_nothing" => OnClosure::DoNothing,
             None => OnClosure::DoNothing,
             _ => {
-                return zerror!(ZErrorKind::Other {
-                    descr: format!(
-                        r#"Optional property `{}` of rocksdb storage configurations must be either "do_nothing" (default) or "destroy_db""#,
-                        PROP_STORAGE_ON_CLOSURE
-                    )
-                })
+                bail!(
+                    r#"Optional property `{}` of rocksdb storage configurations must be either "do_nothing" (default) or "destroy_db""#,
+                    PROP_STORAGE_ON_CLOSURE
+                )
             }
         };
 
@@ -140,12 +136,10 @@ impl Backend for RocksdbBackend {
                 db_path
             }
             _ => {
-                return zerror!(ZErrorKind::Other {
-                    descr: format!(
-                        r#"Required property `{}` for File System Storage must be a string"#,
-                        PROP_STORAGE_DIR
-                    )
-                })
+                bail!(
+                    r#"Required property `{}` for File System Storage must be a string"#,
+                    PROP_STORAGE_DIR
+                )
             }
         };
 
@@ -154,12 +148,10 @@ impl Backend for RocksdbBackend {
             Some(serde_json::Value::Bool(true)) => opts.create_if_missing(true),
             Some(serde_json::Value::Bool(false)) | None => {}
             _ => {
-                return zerror!(ZErrorKind::Other {
-                    descr: format!(
-                        r#"Optional property `{}` of rocksdb storage configurations must be a boolean"#,
-                        PROP_STORAGE_CREATE_DB
-                    )
-                })
+                bail!(
+                    r#"Optional property `{}` of rocksdb storage configurations must be a boolean"#,
+                    PROP_STORAGE_CREATE_DB
+                )
             }
         }
         opts.create_missing_column_families(true);
@@ -171,12 +163,11 @@ impl Backend for RocksdbBackend {
             DB::open_cf_descriptors(&opts, &db_path, vec![cf_payloads, cf_data_info])
         }
         .map_err(|e| {
-            zerror2!(ZErrorKind::Other {
-                descr: format!(
-                    "Failed to open data-info database from {:?}: {}",
-                    db_path, e
-                )
-            })
+            zerror!(
+                "Failed to open data-info database from {:?}: {}",
+                db_path,
+                e
+            )
         })?;
         let db = Arc::new(Mutex::new(Some(db)));
 
@@ -234,12 +225,10 @@ impl Storage for RocksdbStorage {
             .try_as_str()?
             .strip_prefix(&self.path_prefix)
             .ok_or_else(|| {
-                zerror2!(ZErrorKind::Other {
-                    descr: format!(
-                        "Received a Sample not starting with path_prefix '{}'",
-                        self.path_prefix
-                    )
-                })
+                zerror!(
+                    "Received a Sample not starting with path_prefix '{}'",
+                    self.path_prefix
+                )
             })?;
 
         // Get lock on DB
@@ -512,9 +501,7 @@ fn get_timestamp(db: &DB, key: &str) -> ZResult<Option<Timestamp>> {
             trace!("timestamp for {:?} not found", key);
             Ok(None)
         }
-        Err(e) => zerror!(ZErrorKind::Other {
-            descr: format!("Failed to get data-info for {:?}: {}", key, e)
-        }),
+        Err(e) => bail!("Failed to get data-info for {:?}: {}", key, e),
     }
 }
 
@@ -526,9 +513,7 @@ fn encode_data_info(encoding: &Encoding, timestamp: &Timestamp, deleted: bool) -
         && result.write_zint(encoding.prefix)
         && result.write_string(&*encoding.suffix);
     if !write_ok {
-        zerror!(ZErrorKind::Other {
-            descr: "Failed to encode data-info".to_string()
-        })
+        bail!("Failed to encode data-info")
     } else {
         Ok(result)
     }
@@ -536,26 +521,19 @@ fn encode_data_info(encoding: &Encoding, timestamp: &Timestamp, deleted: bool) -
 
 fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
     let mut buf = ZBuf::from(buf.to_vec());
-    let timestamp = buf.read_timestamp().ok_or_else(|| {
-        zerror2!(ZErrorKind::Other {
-            descr: "Failed to decode data-info (timestamp)".to_string()
-        })
-    })?;
-    let deleted = buf.read_zint().ok_or_else(|| {
-        zerror2!(ZErrorKind::Other {
-            descr: "Failed to decode data-info (encoding.prefix)".to_string()
-        })
-    })? != 0;
-    let encoding_prefix = buf.read_zint().ok_or_else(|| {
-        zerror2!(ZErrorKind::Other {
-            descr: "Failed to decode data-info (encoding.prefix)".to_string()
-        })
-    })?;
-    let encoding_suffix = buf.read_string().ok_or_else(|| {
-        zerror2!(ZErrorKind::Other {
-            descr: "Failed to decode data-info (encoding.suffix)".to_string()
-        })
-    })?;
+    let timestamp = buf
+        .read_timestamp()
+        .ok_or_else(|| zerror!("Failed to decode data-info (timestamp)"))?;
+    let deleted = buf
+        .read_zint()
+        .ok_or_else(|| zerror!("Failed to decode data-info (encoding.prefix)"))?
+        != 0;
+    let encoding_prefix = buf
+        .read_zint()
+        .ok_or_else(|| zerror!("Failed to decode data-info (encoding.prefix)"))?;
+    let encoding_suffix = buf
+        .read_string()
+        .ok_or_else(|| zerror!("Failed to decode data-info (encoding.suffix)"))?;
     Ok((
         Encoding {
             prefix: encoding_prefix,
@@ -569,11 +547,9 @@ fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
 // decode the timestamp only
 fn decode_timestamp(buf: &[u8]) -> ZResult<Timestamp> {
     let mut buf = ZBuf::from(buf.to_vec());
-    let timestamp = buf.read_timestamp().ok_or_else(|| {
-        zerror2!(ZErrorKind::Other {
-            descr: "Failed to decode data-info (timestamp)".to_string()
-        })
-    })?;
+    let timestamp = buf
+        .read_timestamp()
+        .ok_or_else(|| zerror!("Failed to decode data-info (timestamp)"))?;
     Ok(timestamp)
 }
 
@@ -581,23 +557,18 @@ fn decode_timestamp(buf: &[u8]) -> ZResult<Timestamp> {
 fn decode_deleted_flag(buf: &[u8]) -> ZResult<bool> {
     let mut buf = ZBuf::from(buf.to_vec());
 
-    let _timestamp = buf.read_timestamp().ok_or_else(|| {
-        zerror2!(ZErrorKind::Other {
-            descr: "Failed to decode data-info (timestamp)".to_string()
-        })
-    })?;
-    let deleted = buf.read_zint().ok_or_else(|| {
-        zerror2!(ZErrorKind::Other {
-            descr: "Failed to decode data-info (encoding.prefix)".to_string()
-        })
-    })? != 0;
+    let _timestamp = buf
+        .read_timestamp()
+        .ok_or_else(|| zerror!("Failed to decode data-info (timestamp)"))?;
+    let deleted = buf
+        .read_zint()
+        .ok_or_else(|| zerror!("Failed to decode data-info (encoding.prefix)"))?
+        != 0;
     Ok(deleted)
 }
 
-fn rocksdb_err_to_zerr(err: rocksdb::Error) -> ZError {
-    zerror2!(ZErrorKind::Other {
-        descr: format!("Rocksdb error: {}", err.into_string())
-    })
+fn rocksdb_err_to_zerr(err: rocksdb::Error) -> zenoh_util::core::Error {
+    zerror!("Rocksdb error: {}", err.into_string()).into()
 }
 
 pub(crate) fn concat_str<S1: AsRef<str>, S2: AsRef<str>>(s1: S1, s2: S2) -> String {
