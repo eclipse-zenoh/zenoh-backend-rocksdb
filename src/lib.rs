@@ -16,19 +16,17 @@ use async_std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use log::{debug, error, trace, warn};
 use rocksdb::{ColumnFamilyDescriptor, IteratorMode, Options, WriteBatch, DB};
-use std::convert::TryFrom;
-use std::io::prelude::*;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uhlc::NTP64;
-use zenoh::net::utils::resource_name;
-use zenoh::net::{DataInfo, Sample, ZBuf, ZInt};
-use zenoh::{
-    Change, ChangeKind, Properties, Selector, Timestamp, Value, ZError, ZErrorKind, ZResult,
-};
+use zenoh::buf::{WBuf, ZBuf};
+use zenoh::prelude::*;
+use zenoh::time::{new_reception_timestamp, Timestamp};
+use zenoh::Result as ZResult;
+use zenoh_backend_traits::config::{BackendConfig, StorageConfig};
 use zenoh_backend_traits::*;
 use zenoh_util::collections::{Timed, TimedEvent, Timer};
-use zenoh_util::{zenoh_home, zerror, zerror2};
+use zenoh_util::{bail, zenoh_home, zerror};
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
 pub const SCOPE_ENV_VAR: &str = "ZBACKEND_ROCKSDB_ROOT";
@@ -49,11 +47,6 @@ pub const PROP_STORAGE_ON_CLOSURE: &str = "on_closure";
 const CF_PAYLOADS: &str = rocksdb::DEFAULT_COLUMN_FAMILY_NAME;
 const CF_DATA_INFO: &str = "data_info";
 
-// maximum size of serialized data-info: deleted (u8) + encoding (u64) + timestamp (u64 + ID at max size)
-const MAX_VAL_LEN: usize = 1 + 8 + 8 + uhlc::ID::MAX_SIZE;
-// minimum size of serialized data-info: deleted (u8) + encoding (u64) + timestamp (u64 + ID at 1 byte)
-const MIN_VAL_LEN: usize = 1 + 8 + 8 + 1;
-
 const GIT_VERSION: &str = git_version::git_version!(prefix = "v", cargo_prefix = "v");
 lazy_static::lazy_static! {
     static ref LONG_VERSION: String = format!("{} built with {}", GIT_VERSION, env!("RUSTC_VERSION"));
@@ -66,8 +59,11 @@ pub(crate) enum OnClosure {
     DoNothing,
 }
 
+#[allow(dead_code)]
+const CREATE_BACKEND_TYPECHECK: CreateBackend = create_backend;
+
 #[no_mangle]
-pub fn create_backend(_unused: &Properties) -> ZResult<Box<dyn Backend>> {
+pub fn create_backend(_unused: BackendConfig) -> ZResult<Box<dyn Backend>> {
     // For some reasons env_logger is sometime not active in a loaded library.
     // Try to activate it here, ignoring failures.
     let _ = env_logger::try_init();
@@ -84,7 +80,7 @@ pub fn create_backend(_unused: &Properties) -> ZResult<Box<dyn Backend>> {
     properties.insert("root".into(), root.to_string_lossy().into());
     properties.insert("version".into(), LONG_VERSION.clone());
 
-    let admin_status = zenoh::utils::properties_to_json_value(&properties);
+    let admin_status = zenoh::properties::properties_to_json_value(&properties);
     Ok(Box::new(RocksdbBackend { admin_status, root }))
 }
 
@@ -99,67 +95,64 @@ impl Backend for RocksdbBackend {
         self.admin_status.clone()
     }
 
-    async fn create_storage(&mut self, props: Properties) -> ZResult<Box<dyn Storage>> {
-        let path_expr = props.get(PROP_STORAGE_PATH_EXPR).unwrap();
-        let path_prefix = props
-            .get(PROP_STORAGE_PATH_PREFIX)
-            .ok_or_else(|| {
-                zerror2!(ZErrorKind::Other {
-                    descr: format!(
-                        r#"Missing required property for File System Storage: "{}""#,
-                        PROP_STORAGE_PATH_PREFIX
-                    )
-                })
-            })?
-            .clone();
+    async fn create_storage(&mut self, config: StorageConfig) -> ZResult<Box<dyn Storage>> {
+        let path_expr = config.key_expr.clone();
+        let path_prefix = config.truncate.clone();
         if !path_expr.starts_with(&path_prefix) {
-            return zerror!(ZErrorKind::Other {
-                descr: format!(
-                    r#"The specified "{}={}" is not a prefix of "{}={}""#,
-                    PROP_STORAGE_PATH_PREFIX, path_prefix, PROP_STORAGE_PATH_EXPR, path_expr
-                )
-            });
+            bail!(
+                r#"The specified prefix="{}" is not a prefix of the key expression="{}""#,
+                path_prefix,
+                path_expr
+            )
         }
 
-        let read_only = props.contains_key(PROP_STORAGE_READ_ONLY);
-
-        let on_closure = match props.get(PROP_STORAGE_ON_CLOSURE) {
-            Some(s) => {
-                if s == "destroy_db" {
-                    OnClosure::DestroyDB
-                } else {
-                    return zerror!(ZErrorKind::Other {
-                        descr: format!("Unsupported value for 'on_closure' property: {}", s)
-                    });
-                }
+        let read_only = match config.rest.get(PROP_STORAGE_READ_ONLY) {
+            None | Some(serde_json::Value::Bool(false)) => false,
+            Some(serde_json::Value::Bool(true)) => true,
+            _ => {
+                bail!(
+                    "Optional property `{}` of rocksdb storage configurations must be a boolean",
+                    PROP_STORAGE_READ_ONLY
+                )
             }
-            None => OnClosure::DoNothing,
         };
 
-        let db_path = props
-            .get(PROP_STORAGE_DIR)
-            .map(|dir| {
-                // prepend db_path with self.root
+        let on_closure = match config.rest.get(PROP_STORAGE_ON_CLOSURE) {
+            Some(serde_json::Value::String(s)) if s == "destroy_db" => OnClosure::DestroyDB,
+            Some(serde_json::Value::String(s)) if s == "do_nothing" => OnClosure::DoNothing,
+            None => OnClosure::DoNothing,
+            _ => {
+                bail!(
+                    r#"Optional property `{}` of rocksdb storage configurations must be either "do_nothing" (default) or "destroy_db""#,
+                    PROP_STORAGE_ON_CLOSURE
+                )
+            }
+        };
+
+        let db_path = match config.rest.get(PROP_STORAGE_DIR) {
+            Some(serde_json::Value::String(dir)) => {
                 let mut db_path = self.root.clone();
-                for segment in dir.split(std::path::MAIN_SEPARATOR) {
-                    if !segment.is_empty() {
-                        db_path.push(segment);
-                    }
-                }
+                db_path.push(dir);
                 db_path
-            })
-            .ok_or_else(|| {
-                zerror2!(ZErrorKind::Other {
-                    descr: format!(
-                        r#"Missing required property for File System Storage: "{}""#,
-                        PROP_STORAGE_DIR
-                    )
-                })
-            })?;
+            }
+            _ => {
+                bail!(
+                    r#"Required property `{}` for File System Storage must be a string"#,
+                    PROP_STORAGE_DIR
+                )
+            }
+        };
 
         let mut opts = Options::default();
-        if props.contains_key(PROP_STORAGE_CREATE_DB) {
-            opts.create_if_missing(true);
+        match config.rest.get(PROP_STORAGE_CREATE_DB) {
+            Some(serde_json::Value::Bool(true)) => opts.create_if_missing(true),
+            Some(serde_json::Value::Bool(false)) | None => {}
+            _ => {
+                bail!(
+                    r#"Optional property `{}` of rocksdb storage configurations must be a boolean"#,
+                    PROP_STORAGE_CREATE_DB
+                )
+            }
         }
         opts.create_missing_column_families(true);
         let db = if read_only {
@@ -170,12 +163,11 @@ impl Backend for RocksdbBackend {
             DB::open_cf_descriptors(&opts, &db_path, vec![cf_payloads, cf_data_info])
         }
         .map_err(|e| {
-            zerror2!(ZErrorKind::Other {
-                descr: format!(
-                    "Failed to open data-info database from {:?}: {}",
-                    db_path, e
-                )
-            })
+            zerror!(
+                "Failed to open data-info database from {:?}: {}",
+                db_path,
+                e
+            )
         })?;
         let db = Arc::new(Mutex::new(Some(db)));
 
@@ -188,10 +180,8 @@ impl Backend for RocksdbBackend {
             let _ = t.add(gc).await;
             Some(t)
         };
-
-        let admin_status = zenoh::utils::properties_to_json_value(&props);
         Ok(Box::new(RocksdbStorage {
-            admin_status,
+            admin_status: config,
             path_prefix,
             on_closure,
             read_only,
@@ -200,17 +190,17 @@ impl Backend for RocksdbBackend {
         }))
     }
 
-    fn incoming_data_interceptor(&self) -> Option<Box<dyn IncomingDataInterceptor>> {
+    fn incoming_data_interceptor(&self) -> Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>> {
         None
     }
 
-    fn outgoing_data_interceptor(&self) -> Option<Box<dyn OutgoingDataInterceptor>> {
+    fn outgoing_data_interceptor(&self) -> Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>> {
         None
     }
 }
 
 struct RocksdbStorage {
-    admin_status: Value,
+    admin_status: StorageConfig,
     path_prefix: String,
     on_closure: OnClosure,
     read_only: bool,
@@ -224,26 +214,21 @@ struct RocksdbStorage {
 #[async_trait]
 impl Storage for RocksdbStorage {
     async fn get_admin_status(&self) -> Value {
-        self.admin_status.clone()
+        self.admin_status.to_json_value().into()
     }
 
     // When receiving a Sample (i.e. on PUT or DELETE operations)
     async fn on_sample(&mut self, sample: Sample) -> ZResult<()> {
-        // transform the Sample into a Change to get kind, encoding and timestamp (not decoding => RawValue)
-        let change = Change::from_sample(sample, false)?;
-
         // the key in rocksdb is the path stripped from "path_prefix"
-        let key = change
-            .path
-            .as_str()
+        let key = sample
+            .key_expr
+            .try_as_str()?
             .strip_prefix(&self.path_prefix)
             .ok_or_else(|| {
-                zerror2!(ZErrorKind::Other {
-                    descr: format!(
-                        "Received a Sample not starting with path_prefix '{}'",
-                        self.path_prefix
-                    )
-                })
+                zerror!(
+                    "Received a Sample not starting with path_prefix '{}'",
+                    self.path_prefix
+                )
             })?;
 
         // Get lock on DB
@@ -252,48 +237,39 @@ impl Storage for RocksdbStorage {
 
         // get latest timestamp for this key (if already exists in db)
         // and drop incoming sample if older
+        let sample_ts = sample.timestamp.unwrap_or_else(new_reception_timestamp);
         if let Some(old_ts) = get_timestamp(db, key)? {
-            if change.timestamp < old_ts {
-                debug!("{} on {} dropped: out-of-date", change.kind, change.path);
+            if sample_ts < old_ts {
+                debug!(
+                    "{} on {} dropped: out-of-date",
+                    sample.kind, sample.key_expr
+                );
                 return Ok(());
             }
         }
 
         // Store or delete the sample depending the ChangeKind
-        match change.kind {
-            ChangeKind::Put => {
+        match sample.kind {
+            SampleKind::Put => {
                 if !self.read_only {
-                    // check that there is a value for this PUT sample
-                    if change.value.is_none() {
-                        return zerror!(ZErrorKind::Other {
-                            descr: format!(
-                                "Received a PUT Sample without value for {}",
-                                change.path
-                            )
-                        });
-                    }
-
-                    // get the encoding and buffer from the value (RawValue => direct access to inner ZBuf)
-                    let (encoding, payload) = change.value.unwrap().encode();
-
                     // put payload and data_info in DB
-                    put_kv(db, key, payload, encoding, change.timestamp)
+                    put_kv(db, key, sample.value, sample_ts)
                 } else {
                     warn!("Received PUT for read-only DB on {:?} - ignored", key);
                     Ok(())
                 }
             }
-            ChangeKind::Delete => {
+            SampleKind::Delete => {
                 if !self.read_only {
                     // delete file
-                    delete_kv(db, key, change.timestamp)
+                    delete_kv(db, key, sample_ts)
                 } else {
                     warn!("Received DELETE for read-only DB on {:?} - ignored", key);
                     Ok(())
                 }
             }
-            ChangeKind::Patch => {
-                warn!("Received PATCH for {}: not yet supported", change.path);
+            SampleKind::Patch => {
+                warn!("Received PATCH for {}: not yet supported", sample.key_expr);
                 Ok(())
             }
         }
@@ -302,14 +278,15 @@ impl Storage for RocksdbStorage {
     // When receiving a Query (i.e. on GET operations)
     async fn on_query(&mut self, query: Query) -> ZResult<()> {
         // get the query's Selector
-        let selector = Selector::try_from(&query)?;
+        let selector = query.selector();
 
         // get the list of sub-path expressions that will match the same stored keys than
         // the selector, if those keys had the path_prefix.
-        let path_exprs = utils::get_sub_path_exprs(selector.path_expr.as_str(), &self.path_prefix);
+        let sub_selectors =
+            utils::get_sub_key_selectors(selector.key_selector.try_as_str()?, &self.path_prefix);
         debug!(
-            "Query on {} with path_prefix={} => sub_path_exprs = {:?}",
-            selector.path_expr, self.path_prefix, path_exprs
+            "Query on {} with path_prefix={} => sub_selectors = {:?}",
+            selector.key_selector, self.path_prefix, sub_selectors
         );
 
         // Get lock on DB
@@ -317,22 +294,20 @@ impl Storage for RocksdbStorage {
         let db = db_cell.as_ref().unwrap();
 
         // Get all matching keys/values
-        let mut kvs: Vec<(String, Vec<u8>, ZInt, Timestamp)> = Vec::with_capacity(path_exprs.len());
-        for path_expr in path_exprs {
-            if path_expr.contains('*') {
-                find_matching_kv(db, path_expr, &mut kvs);
+        let mut kvs: Vec<(String, Value, Timestamp)> = Vec::with_capacity(sub_selectors.len());
+        for sub_selector in sub_selectors {
+            if sub_selector.contains('*') {
+                find_matching_kv(db, sub_selector, &mut kvs);
             } else {
                 // path_expr correspond to 1 key. Get it.
-                match get_kv(db, path_expr) {
-                    Ok(Some((payload, encoding, timestamp))) => {
-                        kvs.push((path_expr.into(), payload, encoding, timestamp))
+                match get_kv(db, sub_selector) {
+                    Ok(Some((value, timestamp))) => {
+                        kvs.push((sub_selector.into(), value, timestamp))
                     }
                     Ok(None) => (), // key not found, do nothing
                     Err(e) => warn!(
                         "Replying to query on {} : failed get key {} : {}",
-                        query.res_name(),
-                        path_expr,
-                        e
+                        selector, sub_selector, e
                     ),
                 }
             }
@@ -342,18 +317,11 @@ impl Storage for RocksdbStorage {
         drop(db_cell);
 
         // Send replies
-        for (key, payload, encoding, timestamp) in kvs {
+        for (key, value, timestamp) in kvs {
             // append path_prefix to the key
-            let path = concat_str(&self.path_prefix, &key);
-            let mut info = DataInfo::new();
-            info.encoding = Some(encoding);
-            info.timestamp = Some(timestamp);
+            let res_name = concat_str(&self.path_prefix, &key);
             query
-                .reply(Sample {
-                    res_name: path,
-                    payload: payload.into(),
-                    data_info: Some(info),
-                })
+                .reply(Sample::new(res_name, value).with_timestamp(timestamp))
                 .await;
         }
 
@@ -410,34 +378,42 @@ impl Drop for RocksdbStorage {
     }
 }
 
-fn put_kv(db: &DB, key: &str, content: ZBuf, encoding: ZInt, timestamp: Timestamp) -> ZResult<()> {
+fn put_kv(db: &DB, key: &str, value: Value, timestamp: Timestamp) -> ZResult<()> {
     trace!("Put key {} in {:?}", key, db);
-    let data_info = encode_data_info(encoding, timestamp, false)?;
+    let data_info = encode_data_info(&value.encoding, &timestamp, false)?;
 
     // Write content and encoding+timestamp in different Column Families
     let mut batch = WriteBatch::default();
     batch.put_cf(
         db.cf_handle(CF_PAYLOADS).unwrap(),
         key,
-        content.contiguous(),
+        value.payload.contiguous(),
     );
-    batch.put_cf(db.cf_handle(CF_DATA_INFO).unwrap(), key, data_info);
+    batch.put_cf(
+        db.cf_handle(CF_DATA_INFO).unwrap(),
+        key,
+        data_info.get_first_slice(..),
+    );
     db.write(batch).map_err(rocksdb_err_to_zerr)
 }
 
 fn delete_kv(db: &DB, key: &str, timestamp: Timestamp) -> ZResult<()> {
     trace!("Delete key {} from {:?}", key, db);
-    let data_info = encode_data_info(zenoh::net::encoding::NONE, timestamp, true)?;
+    let data_info = encode_data_info(&Encoding::EMPTY, &timestamp, true)?;
 
     // Delete key from CF_PAYLOADS Column Family
     // Put deletion timestamp into CF_DATA_INFO Column Family (to avoid re-insertion of older value)
     let mut batch = WriteBatch::default();
     batch.delete_cf(db.cf_handle(CF_PAYLOADS).unwrap(), key);
-    batch.put_cf(db.cf_handle(CF_DATA_INFO).unwrap(), key, data_info);
+    batch.put_cf(
+        db.cf_handle(CF_DATA_INFO).unwrap(),
+        key,
+        data_info.get_first_slice(..),
+    );
     db.write(batch).map_err(rocksdb_err_to_zerr)
 }
 
-fn get_kv(db: &DB, key: &str) -> ZResult<Option<(Vec<u8>, ZInt, Timestamp)>> {
+fn get_kv(db: &DB, key: &str) -> ZResult<Option<(Value, Timestamp)>> {
     trace!("Get key {} from {:?}", key, db);
     // TODO: use MultiGet when available (see https://github.com/rust-rocksdb/rust-rocksdb/issues/485)
     match (
@@ -449,30 +425,37 @@ fn get_kv(db: &DB, key: &str) -> ZResult<Option<(Vec<u8>, ZInt, Timestamp)>> {
             if deleted {
                 Ok(None)
             } else {
-                Ok(Some((payload, encoding, timestamp)))
+                Ok(Some((
+                    Value {
+                        payload: payload.into(),
+                        encoding,
+                    },
+                    timestamp,
+                )))
             }
         }
         (Ok(Some(payload)), Ok(None)) => {
             // Only the payload is present in DB!
-            // Possibly legacy data. Consider as encoding as NONE and create timestamp from now()
-            let timestamp = zenoh::utils::new_reception_timestamp();
-            Ok(Some((payload, zenoh::net::encoding::NONE, timestamp)))
+            // Possibly legacy data. Consider as encoding as APP_OCTET_STREAM and create timestamp from now()
+            Ok(Some((
+                Value {
+                    payload: payload.into(),
+                    encoding: Encoding::APP_OCTET_STREAM,
+                },
+                new_reception_timestamp(),
+            )))
         }
         (Ok(None), _) => Ok(None),
         (Err(err), _) | (_, Err(err)) => Err(rocksdb_err_to_zerr(err)),
     }
 }
 
-fn find_matching_kv(
-    db: &DB,
-    path_expr: &str,
-    results: &mut Vec<(String, Vec<u8>, ZInt, Timestamp)>,
-) {
+fn find_matching_kv(db: &DB, sub_selector: &str, results: &mut Vec<(String, Value, Timestamp)>) {
     // Use Rocksdb prefix seek for faster search
-    let prefix = &path_expr[..path_expr.find('*').unwrap()];
+    let prefix = &sub_selector[..sub_selector.find('*').unwrap()];
     trace!(
         "Find keys matching {} from {:?} using prefix seek with '{}'",
-        path_expr,
+        sub_selector,
         db,
         prefix
     );
@@ -481,22 +464,29 @@ fn find_matching_kv(
     for (key, buf) in db.prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), prefix) {
         if let Ok(false) = decode_deleted_flag(&buf) {
             let key_str = String::from_utf8_lossy(&key);
-            if resource_name::intersect(&key_str, path_expr) {
+            if zenoh::utils::key_expr::intersect(&key_str, sub_selector) {
                 match db.get_cf(db.cf_handle(CF_PAYLOADS).unwrap(), &key) {
                     Ok(Some(payload)) => {
                         if let Ok((encoding, timestamp, _)) = decode_data_info(&buf) {
-                            results.push((key_str.into_owned(), payload, encoding, timestamp))
+                            results.push((
+                                key_str.into_owned(),
+                                Value {
+                                    payload: payload.into(),
+                                    encoding,
+                                },
+                                timestamp,
+                            ))
                         } else {
                             warn!(
                                 "Replying to query on {} : failed to decode data_info for key {}",
-                                path_expr, key_str
+                                sub_selector, key_str
                             )
                         }
                     }
                     Ok(None) => (), // data_info exists, but not payload: key was probably deleted
                     Err(err) => warn!(
                         "Replying to query on {} : failed get key {} : {}",
-                        path_expr, key_str, err
+                        sub_selector, key_str, err
                     ),
                 }
             }
@@ -511,77 +501,74 @@ fn get_timestamp(db: &DB, key: &str) -> ZResult<Option<Timestamp>> {
             trace!("timestamp for {:?} not found", key);
             Ok(None)
         }
-        Err(e) => zerror!(ZErrorKind::Other {
-            descr: format!("Failed to get data-info for {:?}: {}", key, e)
-        }),
+        Err(e) => bail!("Failed to get data-info for {:?}: {}", key, e),
     }
 }
 
-fn encode_data_info(encoding: ZInt, timestamp: Timestamp, deleted: bool) -> ZResult<Vec<u8>> {
-    // Encoding format is the following:
-    //  - bytes[0]:     the "deleted" boolean as u8
-    //  - bytes[1..9]:  the encoding as u64
-    //  - bytes[9..17]: the timestamp's time as u64
-    //  - bytes[17..]:  the timestamp's ID
-    let mut buf: Vec<u8> = Vec::with_capacity(MAX_VAL_LEN);
-    buf.push(if deleted { 1u8 } else { 0u8 });
-    buf.write_all(&encoding.to_ne_bytes())
-        .and_then(|()| buf.write_all(&timestamp.get_time().as_u64().to_ne_bytes()))
-        .and_then(|()| buf.write_all(timestamp.get_id().as_slice()))
-        .map_err(|e| {
-            zerror2!(ZErrorKind::Other {
-                descr: format!("Failed to encode data-info for: {}", e)
-            })
-        })?;
-    Ok(buf)
+fn encode_data_info(encoding: &Encoding, timestamp: &Timestamp, deleted: bool) -> ZResult<WBuf> {
+    let mut result: WBuf = WBuf::new(32, true);
+    // note: encode timestamp at first for faster decoding when only this one is required
+    let write_ok = result.write_timestamp(timestamp)
+        && result.write_zint(deleted as ZInt)
+        && result.write_zint(encoding.prefix)
+        && result.write_string(&*encoding.suffix);
+    if !write_ok {
+        bail!("Failed to encode data-info")
+    } else {
+        Ok(result)
+    }
 }
 
-fn decode_data_info(buf: &[u8]) -> ZResult<(ZInt, Timestamp, bool)> {
-    if buf.len() < MIN_VAL_LEN {
-        return zerror!(ZErrorKind::Other {
-            descr: "Failed to decode data-info (buffer too small)".to_string()
-        });
-    }
-    let deleted = buf[0] > 0;
-    let mut encoding_bytes = [0u8; 8];
-    encoding_bytes.clone_from_slice(&buf[1..9]);
-    let encoding = ZInt::from_ne_bytes(encoding_bytes);
-    let mut time_bytes = [0u8; 8];
-    time_bytes.clone_from_slice(&buf[9..17]);
-    let time = u64::from_ne_bytes(time_bytes);
-    let id = uhlc::ID::try_from(&buf[17..]).unwrap();
-    let timestamp = Timestamp::new(NTP64(time), id);
-    Ok((encoding, timestamp, deleted))
+fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
+    let mut buf = ZBuf::from(buf.to_vec());
+    let timestamp = buf
+        .read_timestamp()
+        .ok_or_else(|| zerror!("Failed to decode data-info (timestamp)"))?;
+    let deleted = buf
+        .read_zint()
+        .ok_or_else(|| zerror!("Failed to decode data-info (encoding.prefix)"))?
+        != 0;
+    let encoding_prefix = buf
+        .read_zint()
+        .ok_or_else(|| zerror!("Failed to decode data-info (encoding.prefix)"))?;
+    let encoding_suffix = buf
+        .read_string()
+        .ok_or_else(|| zerror!("Failed to decode data-info (encoding.suffix)"))?;
+    Ok((
+        Encoding {
+            prefix: encoding_prefix,
+            suffix: encoding_suffix.into(),
+        },
+        timestamp,
+        deleted,
+    ))
 }
 
 // decode the timestamp only
 fn decode_timestamp(buf: &[u8]) -> ZResult<Timestamp> {
-    if buf.len() < MIN_VAL_LEN {
-        return zerror!(ZErrorKind::Other {
-            descr: "Failed to decode data-info (buffer too small)".to_string()
-        });
-    }
-    let mut time_bytes = [0u8; 8];
-    time_bytes.clone_from_slice(&buf[9..17]);
-    let time = u64::from_ne_bytes(time_bytes);
-    let id = uhlc::ID::try_from(&buf[17..]).unwrap();
-    Ok(Timestamp::new(NTP64(time), id))
+    let mut buf = ZBuf::from(buf.to_vec());
+    let timestamp = buf
+        .read_timestamp()
+        .ok_or_else(|| zerror!("Failed to decode data-info (timestamp)"))?;
+    Ok(timestamp)
 }
 
 // decode the deleted flag only
 fn decode_deleted_flag(buf: &[u8]) -> ZResult<bool> {
-    if buf.len() < MIN_VAL_LEN {
-        return zerror!(ZErrorKind::Other {
-            descr: "Failed to decode data-info (buffer too small)".to_string()
-        });
-    }
-    Ok(buf[0] > 0)
+    let mut buf = ZBuf::from(buf.to_vec());
+
+    let _timestamp = buf
+        .read_timestamp()
+        .ok_or_else(|| zerror!("Failed to decode data-info (timestamp)"))?;
+    let deleted = buf
+        .read_zint()
+        .ok_or_else(|| zerror!("Failed to decode data-info (encoding.prefix)"))?
+        != 0;
+    Ok(deleted)
 }
 
-fn rocksdb_err_to_zerr(err: rocksdb::Error) -> ZError {
-    zerror2!(ZErrorKind::Other {
-        descr: format!("Rocksdb error: {}", err.into_string())
-    })
+fn rocksdb_err_to_zerr(err: rocksdb::Error) -> zenoh_util::core::Error {
+    zerror!("Rocksdb error: {}", err.into_string()).into()
 }
 
 pub(crate) fn concat_str<S1: AsRef<str>, S2: AsRef<str>>(s1: S1, s2: S2) -> String {
