@@ -97,10 +97,10 @@ impl Backend for RocksdbBackend {
 
     async fn create_storage(&mut self, config: StorageConfig) -> ZResult<Box<dyn Storage>> {
         let path_expr = config.key_expr.clone();
-        let path_prefix = config.truncate.clone();
+        let path_prefix = config.strip_prefix.clone();
         if !path_expr.starts_with(&path_prefix) {
             bail!(
-                r#"The specified prefix="{}" is not a prefix of the key expression="{}""#,
+                r#"The specified "strip_prefix={}" is not a prefix of "key_expr={}""#,
                 path_prefix,
                 path_expr
             )
@@ -177,7 +177,7 @@ impl Backend for RocksdbBackend {
             // start periodic GC event
             let t = Timer::new();
             let gc = TimedEvent::periodic(*GC_PERIOD, GarbageCollectionEvent { db: db.clone() });
-            let _ = t.add(gc).await;
+            let _ = t.add_async(gc).await;
             Some(t)
         };
         Ok(Box::new(RocksdbStorage {
@@ -339,7 +339,7 @@ impl Drop for RocksdbStorage {
 
             // Stop GC
             if let Some(t) = &mut self.timer {
-                t.stop().await;
+                t.stop_async().await;
             }
 
             // Flush all
