@@ -14,25 +14,69 @@ See the [zenoh documentation](http://zenoh.io/docs/manual/backends/) for more de
 This backend relies on [RocksDB](https://rocksdb.org/) to implement the storages.
 Its library name (without OS specific prefix and extension) that zenoh will rely on to find it and load it is **`zbackend_rocksdb`**.
 
-:point_right: **Download:** https://download.eclipse.org/zenoh/zenoh-backend-rocksdb/
+:point_right: **Download stable versions:** https://download.eclipse.org/zenoh/zenoh-backend-rocksdb/
+
+:point_right: **Build "master" branch:** see [below](#How-to-build-it)
+
+-------------------------------
+## :warning: Documentation for previous 0.5 versions:
+The following documentation related to the version currently in development in "master" branch: 0.6.x.
+
+For previous versions see the README and code of the corresponding tagged version:
+ - [0.5.0-beta.9](https://github.com/eclipse-zenoh/zenoh-backend-rocksdb/tree/0.5.0-beta.9#readme)
+ - [0.5.0-beta.8](https://github.com/eclipse-zenoh/zenoh-backend-rocksdb/tree/0.5.0-beta.8#readme)
 
 -------------------------------
 ## **Examples of usage**
 
 Prerequisites:
- - You have a zenoh router running, and the `zbackend_rocksdb` library file is available in `~/.zenoh/lib`.
+ - You have a zenoh router (`zenohd`) installed, and the `zbackend_rocksdb` library file is available in `~/.zenoh/lib`.
  - Declare the `ZBACKEND_ROCKSDB_ROOT` environment variable to the directory where you want the RocksDB databases
    to be stored. If you don't declare it, the `~/.zenoh/zbackend_rocksdb` directory will be used.
 
-Using `curl` on the zenoh router to add backend and storages:
+You can setup storages either at zenoh router startup via a configuration file, either at runtime via the zenoh admin space, using for instance the REST API.
+
+### **Setup via a JSON5 configuration file**
+
+  - Create a `zenoh.json5` configuration file containing:
+    ```json5
+    {
+      plugins: {
+        // configuration of "storages" plugin:
+        storages: {
+          backends: {
+            // configuration of a "rocksdb" backend (the "zbackend_rocksdb" library will be loaded at startup)
+            rocksdb: {
+              storages: {
+                // configuration of a "demo" storage using the "rocksdb" backend
+                demo: {
+                  // the key expression this storage will subscribes to
+                  key_expr: "/demo/example/**",
+                  // this prefix will be stripped from the received key when converting to database key.
+                  // i.e.: "/demo/example/a/b" will be stored as "a/b"
+                  strip_prefix: "/demo/example",
+                  // the RocksDB database will be stored in this directory (relative to ${ZBACKEND_ROCKSDB_ROOT})
+                  dir: "example",
+                  // create the RocksDB database if not already existing
+                  create_db: true
+    } } } } } } }
+    ```
+  - Run the zenoh router with:  
+    `zenohd -c zenoh.json5`
+
+### **Setup at runtime via `curl` commands on the admin space**
+
+  - Run the zenoh router without any specific configuration, but loading the storages plugin:  
+    `zenohd -P storages`
+  - Add the "rocksdb" backend (the "zbackend_rocksdb" library will be loaded):  
+   `curl -X PUT -H 'content-type:application/json' -d '{}' http://localhost:8000/@/router/local/config/plugins/storages/backends/rocksdb`
+  - Add the "demo" storage using the "rocksdb" backend:  
+   `curl -X PUT -H 'content-type:application/json' -d '{key_expr:"/demo/example/**",strip_prefix:"/demo/example",dir:"example",create_db:true}' http://localhost:8000/@/router/local/config/plugins/storages/backends/rocksdb/storages/demo`
+
+### **Tests using the REST API**
+
+Using `curl` to publish and query keys/values, you can:
 ```bash
-# Add a backend that will have all its storages storing data RocksDB databases under the ${ZBACKEND_ROCKSDB_ROOT} directory.
-curl -X PUT -H 'content-type:application/properties' http://localhost:8000/@/router/local/plugin/storages/backend/rocksdb
-
-# Add a storage on /demo/example/** storing data in a ${ZBACKEND_ROCKSDB_ROOT}/test RocksDB database.
-# We use 'key_prefix=/demo/example' thus a zenoh key "/demo/example/a/b" will be stored using "a/b" as key in RocksDB
-curl -X PUT -H 'content-type:application/properties' -d "key_expr=/demo/example/**;key_prefix=/demo/example;dir=test;create_db" http://localhost:8000/@/router/local/plugin/storages/backend/rocksdb/storage/example
-
 # Put values that will be stored in the RocksDB database
 curl -X PUT -d "TEST-1" http://localhost:8000/demo/example/test-1
 curl -X PUT -d "B" http://localhost:8000/demo/example/a/b
@@ -51,8 +95,8 @@ curl http://localhost:8000/demo/example/**
 
 - **`"key_expr"`** (**required**) : the Storage's [Key Expression](../abstractions#key-expression)
 
-- **`"key_prefix"`** (optional) : a prefix of the `"key_expr"` that will be stripped from each key to store.  
-  _Example: with `"key_expr"="/demo/example/**"` and `"key_prefix"="/demo/example/"` the key `"/demo/example/foo/bar"` will be stored as key: `"foo/bar"`. But replying to a get on `"/demo/**"`, the key `"foo/bar"` will be transformed back to the original key (`"/demo/example/foo/bar"`)._
+- **`"strip_prefix"`** (optional) : a prefix of the `"key_expr"` that will be stripped from each key to store.  
+  _Example: with `"key_expr"="/demo/example/**"` and `"strip_prefix"="/demo/example/"` the key `"/demo/example/foo/bar"` will be stored as key: `"foo/bar"`. But replying to a get on `"/demo/**"`, the key `"foo/bar"` will be transformed back to the original key (`"/demo/example/foo/bar"`)._
 
 - **`"dir"`** (**required**) : The name of directory where the RocksDB database is stored.
   The absolute path will be `${ZBACKEND_ROCKSDB_ROOT}/<dir>`.
@@ -76,7 +120,7 @@ Each **storage** will map to a RocksDB database stored in directory: `${ZBACKEND
      (where the default value of `${ZENOH_HOME}` is `~/.zenoh`).
   * `<dir>` is the `"dir"` property specified at storage creation.
 Each zenoh **key/value** put into the storage will map to 2 **key/values** in the database:
-  * For both, the database key is the zenoh key, stripped from the `"key_prefix"` property specified at storage creation.
+  * For both, the database key is the zenoh key, stripped from the `"strip_prefix"` property specified at storage creation.
   * In the `"default"` [Column Family](https://github.com/facebook/rocksdb/wiki/Column-Families) the key is
     put with the zenoh encoded value as a value.
   * In the `"data_info"` [Column Family](https://github.com/facebook/rocksdb/wiki/Column-Families) the key is
@@ -113,15 +157,13 @@ To know the Rust version you're `zenohd` has been built with, use the `--version
 Example:
 ```bash
 $ zenohd --version
-The zenoh router v0.5.0-beta.5-134-g81e85d7 built with rustc 1.51.0-nightly (2987785df 2020-12-28)
+The zenoh router v0.6.0-dev-24-g1f20c86 built with rustc 1.57.0 (f1edd0429 2021-11-29)
 ```
-Here, `zenohd` has been built with the rustc version `1.51.0-nightly` built on 2020-12-28.  
-A nightly build of rustc is included in the **Rustup** nightly toolchain the day after.
-Thus you'll need to install to toolchain **`nightly-2020-12-29`**
+Here, `zenohd` has been built with the rustc version `1.57.0`.  
 Install and use this toolchain with the following command:
 
 ```bash
-$ rustup default nightly-2020-12-29
+$ rustup default 1.57.0
 ```
 
 And then build the backend with:
