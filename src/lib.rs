@@ -175,7 +175,7 @@ impl Backend for RocksdbBackend {
             None
         } else {
             // start periodic GC event
-            let t = Timer::new();
+            let t = Timer::default();
             let gc = TimedEvent::periodic(*GC_PERIOD, GarbageCollectionEvent { db: db.clone() });
             let _ = t.add_async(gc).await;
             Some(t)
