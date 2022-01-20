@@ -25,8 +25,9 @@ use zenoh::time::{new_reception_timestamp, Timestamp};
 use zenoh::Result as ZResult;
 use zenoh_backend_traits::config::{BackendConfig, StorageConfig};
 use zenoh_backend_traits::*;
-use zenoh_util::collections::{Timed, TimedEvent, Timer};
-use zenoh_util::{bail, zenoh_home, zerror};
+use zenoh_collections::{Timed, TimedEvent, Timer};
+use zenoh_core::{bail, zerror};
+use zenoh_util::zenoh_home;
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
 pub const SCOPE_ENV_VAR: &str = "ZBACKEND_ROCKSDB_ROOT";
@@ -571,7 +572,7 @@ fn decode_deleted_flag(buf: &[u8]) -> ZResult<bool> {
     Ok(deleted)
 }
 
-fn rocksdb_err_to_zerr(err: rocksdb::Error) -> zenoh_util::core::Error {
+fn rocksdb_err_to_zerr(err: rocksdb::Error) -> zenoh_core::Error {
     zerror!("Rocksdb error: {}", err.into_string()).into()
 }
 
