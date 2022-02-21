@@ -25,8 +25,10 @@ use zenoh::time::{new_reception_timestamp, Timestamp};
 use zenoh::Result as ZResult;
 use zenoh_backend_traits::config::{BackendConfig, StorageConfig};
 use zenoh_backend_traits::*;
+use zenoh_buffers::traits::{reader::HasReader, SplitBuffer};
 use zenoh_collections::{Timed, TimedEvent, Timer};
 use zenoh_core::{bail, zerror};
+use zenoh_protocol::io::ZBufCodec;
 use zenoh_util::zenoh_home;
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
@@ -525,7 +527,8 @@ fn encode_data_info(encoding: &Encoding, timestamp: &Timestamp, deleted: bool) -
 }
 
 fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
-    let mut buf = ZBuf::from(buf.to_vec());
+    let buf = ZBuf::from(buf.to_vec());
+    let mut buf = buf.reader();
     let timestamp = buf
         .read_timestamp()
         .ok_or_else(|| zerror!("Failed to decode data-info (timestamp)"))?;
@@ -551,7 +554,8 @@ fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
 
 // decode the timestamp only
 fn decode_timestamp(buf: &[u8]) -> ZResult<Timestamp> {
-    let mut buf = ZBuf::from(buf.to_vec());
+    let buf = ZBuf::from(buf.to_vec());
+    let mut buf = buf.reader();
     let timestamp = buf
         .read_timestamp()
         .ok_or_else(|| zerror!("Failed to decode data-info (timestamp)"))?;
@@ -560,8 +564,8 @@ fn decode_timestamp(buf: &[u8]) -> ZResult<Timestamp> {
 
 // decode the deleted flag only
 fn decode_deleted_flag(buf: &[u8]) -> ZResult<bool> {
-    let mut buf = ZBuf::from(buf.to_vec());
-
+    let buf = ZBuf::from(buf.to_vec());
+    let mut buf = buf.reader();
     let _timestamp = buf
         .read_timestamp()
         .ok_or_else(|| zerror!("Failed to decode data-info (timestamp)"))?;
