@@ -16,6 +16,7 @@ use async_std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use log::{debug, error, trace, warn};
 use rocksdb::{ColumnFamilyDescriptor, IteratorMode, Options, WriteBatch, DB};
+use std::convert::TryInto;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uhlc::NTP64;
@@ -517,8 +518,8 @@ fn encode_data_info(encoding: &Encoding, timestamp: &Timestamp, deleted: bool) -
     // note: encode timestamp at first for faster decoding when only this one is required
     let write_ok = result.write_timestamp(timestamp)
         && result.write_zint(deleted as ZInt)
-        && result.write_zint(encoding.prefix)
-        && result.write_string(&*encoding.suffix);
+        && result.write_zint(u8::from(*encoding.prefix()).into())
+        && result.write_string(&*encoding.suffix());
     if !write_ok {
         bail!("Failed to encode data-info")
     } else {
@@ -542,14 +543,15 @@ fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
     let encoding_suffix = buf
         .read_string()
         .ok_or_else(|| zerror!("Failed to decode data-info (encoding.suffix)"))?;
-    Ok((
-        Encoding {
-            prefix: encoding_prefix,
-            suffix: encoding_suffix.into(),
-        },
-        timestamp,
-        deleted,
-    ))
+    let encoding_prefix = encoding_prefix
+        .try_into()
+        .map_err(|_| zerror!("Unknown encoding {}", encoding_prefix))?;
+    let encoding = if encoding_suffix.is_empty() {
+        Encoding::Exact(encoding_prefix)
+    } else {
+        Encoding::WithSuffix(encoding_prefix, encoding_suffix.into())
+    };
+    Ok((encoding, timestamp, deleted))
 }
 
 // decode the timestamp only
