@@ -43,35 +43,43 @@ You can setup storages either at zenoh router startup via a configuration file, 
     {
       plugins: {
         // configuration of "storages" plugin:
-        storages: {
-          backends: {
+        storage_manager: {
+          volumes: {
             // configuration of a "rocksdb" backend (the "zbackend_rocksdb" library will be loaded at startup)
-            rocksdb: {
-              storages: {
-                // configuration of a "demo" storage using the "rocksdb" backend
-                demo: {
-                  // the key expression this storage will subscribes to
-                  key_expr: "/demo/example/**",
-                  // this prefix will be stripped from the received key when converting to database key.
-                  // i.e.: "/demo/example/a/b" will be stored as "a/b"
-                  strip_prefix: "/demo/example",
-                  // the RocksDB database will be stored in this directory (relative to ${ZBACKEND_ROCKSDB_ROOT})
-                  dir: "example",
-                  // create the RocksDB database if not already existing
-                  create_db: true
-    } } } } } } }
+            rocksdb: {}
+          },
+          storages: {
+            // configuration of a "demo" storage using the "rocksdb" backend
+            demo: {
+              // the key expression this storage will subscribes to
+              key_expr: "/demo/example/**",
+              // this prefix will be stripped from the received key when converting to database key.
+              // i.e.: "/demo/example/a/b" will be stored as "a/b"
+              strip_prefix: "/demo/example",
+              volume: {
+                id: "rocksbd",
+              // the RocksDB database will be stored in this directory (relative to ${ZBACKEND_ROCKSDB_ROOT})
+                dir: "example",
+                // create the RocksDB database if not already existing
+                create_db: true
+              }
+            }
+          }
+        }
+      }
+    }
     ```
   - Run the zenoh router with:  
     `zenohd -c zenoh.json5`
 
 ### **Setup at runtime via `curl` commands on the admin space**
 
-  - Run the zenoh router without any specific configuration, but loading the storages plugin:  
-    `zenohd -P storages`
+  - Run the zenoh router:  
+    `zenohd`
   - Add the "rocksdb" backend (the "zbackend_rocksdb" library will be loaded):  
-   `curl -X PUT -H 'content-type:application/json' -d '{}' http://localhost:8000/@/router/local/config/plugins/storages/backends/rocksdb`
+   `curl -X PUT -H 'content-type:application/json' -d '{}' http://localhost:8000/@/router/local/config/plugins/storage_manager/volumes/rocksdb`
   - Add the "demo" storage using the "rocksdb" backend:  
-   `curl -X PUT -H 'content-type:application/json' -d '{key_expr:"/demo/example/**",strip_prefix:"/demo/example",dir:"example",create_db:true}' http://localhost:8000/@/router/local/config/plugins/storages/backends/rocksdb/storages/demo`
+   `curl -X PUT -H 'content-type:application/json' -d '{key_expr:"/demo/example/**",strip_prefix:"/demo/example",volume: {id: "rocksbd",dir: "example",create_db: true}}' http://localhost:8000/@/router/local/config/plugins/storage_manager/storages/demo`
 
 ### **Tests using the REST API**
 
