@@ -24,7 +24,7 @@ use zenoh::buf::{WBuf, ZBuf};
 use zenoh::prelude::*;
 use zenoh::time::{new_reception_timestamp, Timestamp};
 use zenoh::Result as ZResult;
-use zenoh_backend_traits::config::{BackendConfig, StorageConfig};
+use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
 use zenoh_backend_traits::*;
 use zenoh_buffers::traits::{reader::HasReader, SplitBuffer};
 use zenoh_collections::{Timed, TimedEvent, Timer};
@@ -67,7 +67,7 @@ pub(crate) enum OnClosure {
 const CREATE_BACKEND_TYPECHECK: CreateBackend = create_backend;
 
 #[no_mangle]
-pub fn create_backend(_unused: BackendConfig) -> ZResult<Box<dyn Backend>> {
+pub fn create_backend(_unused: VolumeConfig) -> ZResult<Box<dyn Backend>> {
     // For some reasons env_logger is sometime not active in a loaded library.
     // Try to activate it here, ignoring failures.
     let _ = env_logger::try_init();
@@ -114,7 +114,12 @@ impl Backend for RocksdbBackend {
             )
         }
 
-        let read_only = match config.rest.get(PROP_STORAGE_READ_ONLY) {
+        let volume_cfg = match config.volume_cfg.as_object() {
+            Some(v) => v,
+            None => bail!("rocksdb backed storages need volume-specific configurations"),
+        };
+
+        let read_only = match volume_cfg.get(PROP_STORAGE_READ_ONLY) {
             None | Some(serde_json::Value::Bool(false)) => false,
             Some(serde_json::Value::Bool(true)) => true,
             _ => {
@@ -125,7 +130,7 @@ impl Backend for RocksdbBackend {
             }
         };
 
-        let on_closure = match config.rest.get(PROP_STORAGE_ON_CLOSURE) {
+        let on_closure = match volume_cfg.get(PROP_STORAGE_ON_CLOSURE) {
             Some(serde_json::Value::String(s)) if s == "destroy_db" => OnClosure::DestroyDB,
             Some(serde_json::Value::String(s)) if s == "do_nothing" => OnClosure::DoNothing,
             None => OnClosure::DoNothing,
@@ -137,7 +142,7 @@ impl Backend for RocksdbBackend {
             }
         };
 
-        let db_path = match config.rest.get(PROP_STORAGE_DIR) {
+        let db_path = match volume_cfg.get(PROP_STORAGE_DIR) {
             Some(serde_json::Value::String(dir)) => {
                 let mut db_path = self.root.clone();
                 db_path.push(dir);
@@ -152,7 +157,7 @@ impl Backend for RocksdbBackend {
         };
 
         let mut opts = Options::default();
-        match config.rest.get(PROP_STORAGE_CREATE_DB) {
+        match volume_cfg.get(PROP_STORAGE_CREATE_DB) {
             Some(serde_json::Value::Bool(true)) => opts.create_if_missing(true),
             Some(serde_json::Value::Bool(false)) | None => {}
             _ => {
