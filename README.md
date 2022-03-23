@@ -93,28 +93,19 @@ curl -X PUT -d "B" http://localhost:8000/demo/example/a/b
 curl http://localhost:8000/demo/example/**
 ```
 
--------------------------------
-## **Properties for Backend creation**
-
-- **`"lib"`** (optional) : the path to the backend library file. If not speficied, the Backend identifier in admin space must be `rocksdb` (i.e. zenoh will automatically search for a library named `zbackend_rocksdb`).
 
 -------------------------------
-## **Properties for Storage creation**
-
-- **`"key_expr"`** (**required**) : the Storage's [Key Expression](../abstractions#key-expression)
-
-- **`"strip_prefix"`** (optional) : a prefix of the `"key_expr"` that will be stripped from each key to store.  
-  _Example: with `"key_expr"="/demo/example/**"` and `"strip_prefix"="/demo/example/"` the key `"/demo/example/foo/bar"` will be stored as key: `"foo/bar"`. But replying to a get on `"/demo/**"`, the key `"foo/bar"` will be transformed back to the original key (`"/demo/example/foo/bar"`)._
-
-- **`"dir"`** (**required**) : The name of directory where the RocksDB database is stored.
+## Volume-specific storage configuration
+Storages relying on a RocksDB-backed volume must specify some additional configuration as shown [above](#setup-via-a-json5-configuration-file):
+- **`"dir"`** (**required**, string) : The name of directory where the RocksDB database is stored.
   The absolute path will be `${ZBACKEND_ROCKSDB_ROOT}/<dir>`.
 
-- **`"create_db"`** (optional) : create the RocksDB database if not already existing. Not set by default.
+- **`"create_db"`** (optional, boolean) : create the RocksDB database if not already existing. Not set by default.
   *(the value doesn't matter, only the property existence is checked)*
 
-- **`"read_only"`** (optional) : the storage will only answer to GET queries. It will not accept any PUT or DELETE message, and won't put anything in RocksDB database. Not set by default. *(the value doesn't matter, only the property existence is checked)*
+- **`"read_only"`** (optional, boolean) : the storage will only answer to GET queries. It will not accept any PUT or DELETE message, and won't put anything in RocksDB database. Not set by default. *(the value doesn't matter, only the property existence is checked)*
 
-- **`"on_closure"`** (optional) : the strategy to use when the Storage is removed. There are 2 options:
+- **`"on_closure"`** (optional, string) : the strategy to use when the Storage is removed. There are 2 options:
   - *unset*: the database remains untouched (this is the default behaviour)
   - `"destroy_db"`: the database is destroyed (i.e. removed)
 
