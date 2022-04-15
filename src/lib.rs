@@ -25,6 +25,7 @@ use zenoh::prelude::*;
 use zenoh::time::{new_reception_timestamp, Timestamp};
 use zenoh::Result as ZResult;
 use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
+use zenoh_backend_traits::StorageInsertionResult;
 use zenoh_backend_traits::*;
 use zenoh_buffers::traits::{reader::HasReader, SplitBuffer};
 use zenoh_collections::{Timed, TimedEvent, Timer};
@@ -231,7 +232,7 @@ impl Storage for RocksdbStorage {
     }
 
     // When receiving a Sample (i.e. on PUT or DELETE operations)
-    async fn on_sample(&mut self, sample: Sample) -> ZResult<()> {
+    async fn on_sample(&mut self, sample: Sample) -> ZResult<StorageInsertionResult> {
         // the key in rocksdb is the path stripped from "path_prefix"
         let key = sample
             .key_expr
@@ -257,7 +258,7 @@ impl Storage for RocksdbStorage {
                     "{} on {} dropped: out-of-date",
                     sample.kind, sample.key_expr
                 );
-                return Ok(());
+                return Ok(StorageInsertionResult::Outdated);
             }
         }
 
@@ -269,7 +270,7 @@ impl Storage for RocksdbStorage {
                     put_kv(db, key, sample.value, sample_ts)
                 } else {
                     warn!("Received PUT for read-only DB on {:?} - ignored", key);
-                    Ok(())
+                    Err("Received update for read-only DB".into())
                 }
             }
             SampleKind::Delete => {
@@ -278,12 +279,12 @@ impl Storage for RocksdbStorage {
                     delete_kv(db, key, sample_ts)
                 } else {
                     warn!("Received DELETE for read-only DB on {:?} - ignored", key);
-                    Ok(())
+                    Err("Received update for read-only DB".into())
                 }
             }
             SampleKind::Patch => {
                 warn!("Received PATCH for {}: not yet supported", sample.key_expr);
-                Ok(())
+                Ok(StorageInsertionResult::Outdated)
             }
         }
     }
@@ -391,7 +392,12 @@ impl Drop for RocksdbStorage {
     }
 }
 
-fn put_kv(db: &DB, key: &str, value: Value, timestamp: Timestamp) -> ZResult<()> {
+fn put_kv(
+    db: &DB,
+    key: &str,
+    value: Value,
+    timestamp: Timestamp,
+) -> ZResult<StorageInsertionResult> {
     trace!("Put key {} in {:?}", key, db);
     let data_info = encode_data_info(&value.encoding, &timestamp, false)?;
 
@@ -407,10 +413,13 @@ fn put_kv(db: &DB, key: &str, value: Value, timestamp: Timestamp) -> ZResult<()>
         key,
         data_info.get_first_slice(..),
     );
-    db.write(batch).map_err(rocksdb_err_to_zerr)
+    match db.write(batch) {
+        Ok(()) => Ok(StorageInsertionResult::Inserted),
+        Err(e) => Err(rocksdb_err_to_zerr(e)),
+    }
 }
 
-fn delete_kv(db: &DB, key: &str, timestamp: Timestamp) -> ZResult<()> {
+fn delete_kv(db: &DB, key: &str, timestamp: Timestamp) -> ZResult<StorageInsertionResult> {
     trace!("Delete key {} from {:?}", key, db);
     let data_info = encode_data_info(&Encoding::EMPTY, &timestamp, true)?;
 
@@ -423,7 +432,10 @@ fn delete_kv(db: &DB, key: &str, timestamp: Timestamp) -> ZResult<()> {
         key,
         data_info.get_first_slice(..),
     );
-    db.write(batch).map_err(rocksdb_err_to_zerr)
+    match db.write(batch) {
+        Ok(()) => Ok(StorageInsertionResult::Deleted),
+        Err(e) => Err(rocksdb_err_to_zerr(e)),
+    }
 }
 
 fn get_kv(db: &DB, key: &str) -> ZResult<Option<(Value, Timestamp)>> {
