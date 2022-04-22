@@ -334,15 +334,9 @@ impl Storage for RocksdbStorage {
         for (key, value, timestamp) in kvs {
             // append path_prefix to the key
             let res_name = concat_str(&self.path_prefix, &key);
-            if let Err(e) = query
+            query
                 .reply(Sample::new(res_name, value).with_timestamp(timestamp))
-                .await
-            {
-                warn!(
-                    "Error replying to query on {} with {}: {}",
-                    selector, key, e
-                );
-            }
+                .await;
         }
 
         Ok(())
@@ -427,7 +421,7 @@ fn put_kv(
 
 fn delete_kv(db: &DB, key: &str, timestamp: Timestamp) -> ZResult<StorageInsertionResult> {
     trace!("Delete key {} from {:?}", key, db);
-    let data_info = encode_data_info(&KnownEncoding::Empty.into(), &timestamp, true)?;
+    let data_info = encode_data_info(&Encoding::EMPTY, &timestamp, true)?;
 
     // Delete key from CF_PAYLOADS Column Family
     // Put deletion timestamp into CF_DATA_INFO Column Family (to avoid re-insertion of older value)
@@ -471,7 +465,7 @@ fn get_kv(db: &DB, key: &str) -> ZResult<Option<(Value, Timestamp)>> {
             Ok(Some((
                 Value {
                     payload: payload.into(),
-                    encoding: KnownEncoding::AppOctetStream.into(),
+                    encoding: Encoding::APP_OCTET_STREAM,
                 },
                 new_reception_timestamp(),
             )))
