@@ -341,6 +341,31 @@ impl Storage for RocksdbStorage {
 
         Ok(())
     }
+
+    async fn get_all_entries(&self) -> ZResult<Vec<(String, Timestamp)>> {
+        let mut result = Vec::new();
+
+        let db_cell = self.db.lock().await;
+        let db = db_cell.as_ref().unwrap();
+
+        // Iterate over DATA_INFO Column Family to avoid loading payloads
+        for (key, buf) in
+            db.prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), &self.path_prefix)
+        {
+            let key_str = String::from_utf8_lossy(&key);
+            if let Ok((_, timestamp, _)) = decode_data_info(&buf) {
+                result.push((key_str.into_owned(), timestamp))
+            } else {
+                warn!(
+                    "Getting all entries : failed to decode data_info for key {}",
+                    key_str
+                );
+                return Err("Getting all entries : failed to decode data_info".into());
+            }
+        }
+
+        Ok(result)
+    }
 }
 
 impl Drop for RocksdbStorage {
