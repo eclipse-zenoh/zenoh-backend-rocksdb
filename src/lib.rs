@@ -21,16 +21,15 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uhlc::NTP64;
 use zenoh::buf::{WBuf, ZBuf};
+use zenoh::prelude::r#async::AsyncResolve;
 use zenoh::prelude::*;
 use zenoh::time::{new_reception_timestamp, Timestamp};
 use zenoh::Result as ZResult;
 use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
-use zenoh_backend_traits::StorageInsertionResult;
 use zenoh_backend_traits::*;
-use zenoh_buffers::traits::{reader::HasReader, SplitBuffer};
+use zenoh_buffers::traits::reader::HasReader;
 use zenoh_collections::{Timed, TimedEvent, Timer};
 use zenoh_core::{bail, zerror};
-use zenoh_protocol::io::ZBufCodec;
 use zenoh_util::zenoh_home;
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
@@ -336,6 +335,7 @@ impl Storage for RocksdbStorage {
             let res_name = concat_str(&self.path_prefix, &key);
             if let Err(e) = query
                 .reply(Sample::new(res_name, value).with_timestamp(timestamp))
+                .res()
                 .await
             {
                 warn!(
