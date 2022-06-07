@@ -29,7 +29,7 @@ use zenoh_backend_traits::StorageInsertionResult;
 use zenoh_backend_traits::*;
 use zenoh_buffers::traits::{reader::HasReader, SplitBuffer};
 use zenoh_collections::{Timed, TimedEvent, Timer};
-use zenoh_core::{bail, zerror};
+use zenoh_core::{bail, zerror, AsyncResolve};
 use zenoh_protocol::io::ZBufCodec;
 use zenoh_util::zenoh_home;
 
@@ -236,7 +236,7 @@ impl Storage for RocksdbStorage {
         // the key in rocksdb is the path stripped from "path_prefix"
         let key = sample
             .key_expr
-            .try_as_str()?
+            .as_str()
             .strip_prefix(&self.path_prefix)
             .ok_or_else(|| {
                 zerror!(
@@ -282,10 +282,6 @@ impl Storage for RocksdbStorage {
                     Err("Received update for read-only DB".into())
                 }
             }
-            SampleKind::Patch => {
-                warn!("Received PATCH for {}: not yet supported", sample.key_expr);
-                Ok(StorageInsertionResult::Outdated)
-            }
         }
     }
 
@@ -297,10 +293,10 @@ impl Storage for RocksdbStorage {
         // get the list of sub-path expressions that will match the same stored keys than
         // the selector, if those keys had the path_prefix.
         let sub_selectors =
-            utils::get_sub_key_selectors(selector.key_selector.try_as_str()?, &self.path_prefix);
+            utils::get_sub_key_selectors(selector.key_expr.as_str(), &self.path_prefix);
         debug!(
             "Query on {} with path_prefix={} => sub_selectors = {:?}",
-            selector.key_selector, self.path_prefix, sub_selectors
+            selector.key_expr, self.path_prefix, sub_selectors
         );
 
         // Get lock on DB
@@ -333,10 +329,12 @@ impl Storage for RocksdbStorage {
         // Send replies
         for (key, value, timestamp) in kvs {
             // append path_prefix to the key
-            let res_name = concat_str(&self.path_prefix, &key);
+            let res_name =
+                unsafe { KeyExpr::from_string_unchecked(concat_str(&self.path_prefix, &key)) };
             query
                 .reply(Sample::new(res_name, value).with_timestamp(timestamp))
-                .await;
+                .res()
+                .await?;
         }
 
         Ok(())
@@ -446,7 +444,7 @@ fn put_kv(
 
 fn delete_kv(db: &DB, key: &str, timestamp: Timestamp) -> ZResult<StorageInsertionResult> {
     trace!("Delete key {} from {:?}", key, db);
-    let data_info = encode_data_info(&Encoding::EMPTY, &timestamp, true)?;
+    let data_info = encode_data_info(&KnownEncoding::Empty.into(), &timestamp, true)?;
 
     // Delete key from CF_PAYLOADS Column Family
     // Put deletion timestamp into CF_DATA_INFO Column Family (to avoid re-insertion of older value)
@@ -490,7 +488,7 @@ fn get_kv(db: &DB, key: &str) -> ZResult<Option<(Value, Timestamp)>> {
             Ok(Some((
                 Value {
                     payload: payload.into(),
-                    encoding: Encoding::APP_OCTET_STREAM,
+                    encoding: KnownEncoding::AppOctetStream.into(),
                 },
                 new_reception_timestamp(),
             )))
@@ -509,12 +507,22 @@ fn find_matching_kv(db: &DB, sub_selector: &str, results: &mut Vec<(String, Valu
         db,
         prefix
     );
+    let expr_end = sub_selector.find('/').unwrap_or(sub_selector.len());
+    let sub_selector = &sub_selector[..expr_end];
+    let sub_selector = match keyexpr::new(sub_selector) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("`{}` couldn't be made into a keyexpr: {}", sub_selector, e);
+            return;
+        }
+    };
 
     // Iterate over DATA_INFO Column Family to avoid loading payloads possibly for nothing if not matching
     for (key, buf) in db.prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), prefix) {
         if let Ok(false) = decode_deleted_flag(&buf) {
             let key_str = String::from_utf8_lossy(&key);
-            if zenoh::utils::key_expr::intersect(&key_str, sub_selector) {
+            let key_expr = keyexpr::new(key_str.as_ref()).unwrap();
+            if key_expr.intersects(sub_selector) {
                 match db.get_cf(db.cf_handle(CF_PAYLOADS).unwrap(), &key) {
                     Ok(Some(payload)) => {
                         if let Ok((encoding, timestamp, _)) = decode_data_info(&buf) {
