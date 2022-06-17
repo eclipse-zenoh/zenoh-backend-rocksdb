@@ -15,10 +15,10 @@
 name = "zenoh_backend_rocksdb"
 version = "0.6.0-dev.0"
 authors = [
-    "kydos <angelo@icorsaro.net>",
-    "Julien Enoch <julien@enoch.fr>",
-    "Olivier Hécart <olivier.hecart@zettascale.tech>",
-    "Luca Cominardi <luca.cominardi@zettascale.tech>",
+  "kydos <angelo@icorsaro.net>",
+  "Julien Enoch <julien@enoch.fr>",
+  "Olivier Hécart <olivier.hecart@zettascale.tech>",
+  "Luca Cominardi <luca.cominardi@zettascale.tech>",
 ]
 edition = "2018"
 
@@ -36,7 +36,7 @@ zenoh-collections = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "
 zenoh-util = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "api-changes" }
 async-std = "=1.11.0"
 async-trait = "0.1.42"
-uhlc = "0.4.0"
+uhlc = "0.5.0"
 lazy_static = "1.4.0"
 env_logger = "0.9.0"
 log = "0.4"

@@ -21,15 +21,15 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uhlc::NTP64;
 use zenoh::buf::{WBuf, ZBuf};
+use zenoh::prelude::r#async::AsyncResolve;
 use zenoh::prelude::*;
 use zenoh::time::{new_reception_timestamp, Timestamp};
 use zenoh::Result as ZResult;
 use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
-use zenoh_backend_traits::StorageInsertionResult;
 use zenoh_backend_traits::*;
-use zenoh_buffers::traits::{reader::HasReader, SplitBuffer};
+use zenoh_buffers::traits::reader::HasReader;
 use zenoh_collections::{Timed, TimedEvent, Timer};
-use zenoh_core::{bail, zerror, AsyncResolve};
+use zenoh_core::{bail, zerror};
 use zenoh_protocol::io::ZBufCodec;
 use zenoh_util::zenoh_home;
 
@@ -331,10 +331,18 @@ impl Storage for RocksdbStorage {
             // append path_prefix to the key
             let res_name =
                 unsafe { KeyExpr::from_string_unchecked(concat_str(&self.path_prefix, &key)) };
-            query
+            if let Err(e) = query
                 .reply(Sample::new(res_name, value).with_timestamp(timestamp))
                 .res()
-                .await?;
+                .await
+            {
+                log::error!(
+                    "Error replying to query on {} with {}: {}",
+                    selector,
+                    key,
+                    e
+                );
+            }
         }
 
         Ok(())
