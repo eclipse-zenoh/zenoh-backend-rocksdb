@@ -30,7 +30,7 @@ use zenoh_backend_traits::*;
 use zenoh_buffers::traits::reader::HasReader;
 use zenoh_collections::{Timed, TimedEvent, Timer};
 use zenoh_core::{bail, zerror};
-use zenoh_protocol::io::ZBufCodec;
+use zenoh_protocol::io::{WBufCodec, ZBufCodec};
 use zenoh_util::zenoh_home;
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
@@ -292,12 +292,12 @@ impl Storage for RocksdbStorage {
 
         // get the list of sub-path expressions that will match the same stored keys than
         // the selector, if those keys had the path_prefix.
-        let sub_selectors =
-            utils::get_sub_key_selectors(selector.key_expr.as_str(), &self.path_prefix);
+        let sub_selectors = utils::get_sub_key_selectors(&selector.key_expr, &self.path_prefix);
         debug!(
             "Query on {} with path_prefix={} => sub_selectors = {:?}",
             selector.key_expr, self.path_prefix, sub_selectors
         );
+        let sub_selectors = sub_selectors?;
 
         // Get lock on DB
         let db_cell = self.db.lock().await;
@@ -312,7 +312,7 @@ impl Storage for RocksdbStorage {
                 // path_expr correspond to 1 key. Get it.
                 match get_kv(db, sub_selector) {
                     Ok(Some((value, timestamp))) => {
-                        kvs.push((sub_selector.into(), value, timestamp))
+                        kvs.push((sub_selector.to_string(), value, timestamp))
                     }
                     Ok(None) => (), // key not found, do nothing
                     Err(e) => warn!(
@@ -482,10 +482,7 @@ fn get_kv(db: &DB, key: &str) -> ZResult<Option<(Value, Timestamp)>> {
                 Ok(None)
             } else {
                 Ok(Some((
-                    Value {
-                        payload: payload.into(),
-                        encoding,
-                    },
+                    Value::new(payload.into()).encoding(encoding),
                     timestamp,
                 )))
             }
@@ -494,10 +491,7 @@ fn get_kv(db: &DB, key: &str) -> ZResult<Option<(Value, Timestamp)>> {
             // Only the payload is present in DB!
             // Possibly legacy data. Consider as encoding as APP_OCTET_STREAM and create timestamp from now()
             Ok(Some((
-                Value {
-                    payload: payload.into(),
-                    encoding: KnownEncoding::AppOctetStream.into(),
-                },
+                Value::new(payload.into()).encoding(KnownEncoding::AppOctetStream.into()),
                 new_reception_timestamp(),
             )))
         }
@@ -536,10 +530,7 @@ fn find_matching_kv(db: &DB, sub_selector: &str, results: &mut Vec<(String, Valu
                         if let Ok((encoding, timestamp, _)) = decode_data_info(&buf) {
                             results.push((
                                 key_str.into_owned(),
-                                Value {
-                                    payload: payload.into(),
-                                    encoding,
-                                },
+                                Value::new(payload.into()).encoding(encoding),
                                 timestamp,
                             ))
                         } else {
