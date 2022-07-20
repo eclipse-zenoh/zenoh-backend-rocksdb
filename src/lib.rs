@@ -105,16 +105,6 @@ impl Volume for RocksdbBackend {
     }
 
     async fn create_storage(&mut self, config: StorageConfig) -> ZResult<Box<dyn Storage>> {
-        let path_expr = config.key_expr.clone();
-        let path_prefix = config.strip_prefix.clone();
-        if !path_expr.starts_with(&path_prefix) {
-            bail!(
-                r#"The specified "strip_prefix={}" is not a prefix of "key_expr={}""#,
-                path_prefix,
-                path_expr
-            )
-        }
-
         let volume_cfg = match config.volume_cfg.as_object() {
             Some(v) => v,
             None => bail!("rocksdb backed storages need volume-specific configurations"),
@@ -195,8 +185,7 @@ impl Volume for RocksdbBackend {
             Some(t)
         };
         Ok(Box::new(RocksdbStorage {
-            admin_status: config,
-            path_prefix,
+            config,
             on_closure,
             read_only,
             db,
@@ -214,8 +203,7 @@ impl Volume for RocksdbBackend {
 }
 
 struct RocksdbStorage {
-    admin_status: StorageConfig,
-    path_prefix: String,
+    config: StorageConfig,
     on_closure: OnClosure,
     read_only: bool,
     // Note: rocksdb isn't thread-safe. See https://github.com/rust-rocksdb/rust-rocksdb/issues/404
@@ -228,22 +216,23 @@ struct RocksdbStorage {
 #[async_trait]
 impl Storage for RocksdbStorage {
     fn get_admin_status(&self) -> serde_json::Value {
-        self.admin_status.to_json_value()
+        self.config.to_json_value()
     }
 
     // When receiving a Sample (i.e. on PUT or DELETE operations)
     async fn on_sample(&mut self, sample: Sample) -> ZResult<StorageInsertionResult> {
-        // the key in rocksdb is the path stripped from "path_prefix"
-        let key = sample
-            .key_expr
-            .as_str()
-            .strip_prefix(&self.path_prefix)
-            .ok_or_else(|| {
-                zerror!(
-                    "Received a Sample not starting with path_prefix '{}'",
-                    self.path_prefix
-                )
-            })?;
+        // the key in rocksdb is the path stripped from "path_prefix", if specified
+        let key = match &self.config.strip_prefix {
+            Some(prefix) => match sample.key_expr.strip_prefix(prefix).as_slice() {
+                [ke] => ke.as_str(),
+                _ => bail!(
+                    "Received a Sample with keyexpr not starting with path_prefix '{}': '{}'",
+                    prefix,
+                    sample.key_expr
+                ),
+            },
+            None => sample.key_expr.as_str(),
+        };
 
         // Get lock on DB
         let db_cell = self.db.lock().await;
@@ -290,34 +279,36 @@ impl Storage for RocksdbStorage {
         // get the query's Selector
         let selector = query.selector();
 
-        // get the list of sub-path expressions that will match the same stored keys than
-        // the selector, if those keys had the path_prefix.
-        let sub_selectors = utils::get_sub_key_selectors(&selector.key_expr, &self.path_prefix);
-        debug!(
-            "Query on {} with path_prefix={} => sub_selectors = {:?}",
-            selector.key_expr, self.path_prefix, sub_selectors
-        );
-        let sub_selectors = sub_selectors?;
+        // if strip_prefix is set, strip it from the Selector's keyexpr to get the list of sub-keyexpr
+        // that will match the same stored keys than the selector, if those keys had the path_prefix.
+        let sub_keyexpr = match &self.config.strip_prefix {
+            Some(prefix) => {
+                let vec = selector.key_expr.strip_prefix(prefix);
+                if vec.is_empty() {
+                    warn!("Received query on selector '{}', but the configured strip_prefix='{:?}' is not a prefix of this selector", selector, self.config.strip_prefix);
+                }
+                vec
+            }
+            None => vec![selector.key_expr.as_keyexpr()],
+        };
 
         // Get lock on DB
         let db_cell = self.db.lock().await;
         let db = db_cell.as_ref().unwrap();
 
         // Get all matching keys/values
-        let mut kvs: Vec<(String, Value, Timestamp)> = Vec::with_capacity(sub_selectors.len());
-        for sub_selector in sub_selectors {
-            if sub_selector.contains('*') {
-                find_matching_kv(db, sub_selector, &mut kvs);
+        let mut kvs: Vec<(String, Value, Timestamp)> = Vec::with_capacity(sub_keyexpr.len());
+        for ke in sub_keyexpr {
+            if ke.contains('*') {
+                find_matching_kv(db, ke, &mut kvs);
             } else {
                 // path_expr correspond to 1 key. Get it.
-                match get_kv(db, sub_selector) {
-                    Ok(Some((value, timestamp))) => {
-                        kvs.push((sub_selector.to_string(), value, timestamp))
-                    }
+                match get_kv(db, ke) {
+                    Ok(Some((value, timestamp))) => kvs.push((ke.to_string(), value, timestamp)),
                     Ok(None) => (), // key not found, do nothing
                     Err(e) => warn!(
                         "Replying to query on {} : failed get key {} : {}",
-                        selector, sub_selector, e
+                        selector, ke, e
                     ),
                 }
             }
@@ -328,18 +319,20 @@ impl Storage for RocksdbStorage {
 
         // Send replies
         for (key, value, timestamp) in kvs {
-            // append path_prefix to the key
-            let res_name =
-                unsafe { KeyExpr::from_string_unchecked(concat_str(&self.path_prefix, &key)) };
+            // if strip_prefix is set, prefix it back to the zenoh path of this ZFile
+            let ke = match &self.config.strip_prefix {
+                Some(prefix) => prefix.join(&key).unwrap(),
+                None => key.try_into().unwrap(),
+            };
             if let Err(e) = query
-                .reply(Sample::new(res_name, value).with_timestamp(timestamp))
+                .reply(Sample::new(ke.clone(), value).with_timestamp(timestamp))
                 .res()
                 .await
             {
                 log::error!(
                     "Error replying to query on {} with {}: {}",
                     selector,
-                    key,
+                    ke,
                     e
                 );
             }
@@ -348,25 +341,38 @@ impl Storage for RocksdbStorage {
         Ok(())
     }
 
-    async fn get_all_entries(&self) -> ZResult<Vec<(String, Timestamp)>> {
+    async fn get_all_entries(&self) -> ZResult<Vec<(OwnedKeyExpr, Timestamp)>> {
         let mut result = Vec::new();
 
         let db_cell = self.db.lock().await;
         let db = db_cell.as_ref().unwrap();
 
         // Iterate over DATA_INFO Column Family to avoid loading payloads
-        for (key, buf) in
-            db.prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), &self.path_prefix)
-        {
+        let db_prefix = match &self.config.strip_prefix {
+            Some(prefix) => prefix.as_str(),
+            None => "",
+        };
+        for (key, buf) in db.prefix_iterator_cf(
+            db.cf_handle(CF_DATA_INFO).unwrap(),
+            db_prefix,
+        ) {
             let key_str = String::from_utf8_lossy(&key);
-            if let Ok((_, timestamp, _)) = decode_data_info(&buf) {
-                result.push((key_str.into_owned(), timestamp))
-            } else {
-                warn!(
-                    "Getting all entries : failed to decode data_info for key {}",
-                    key_str
-                );
-                return Err("Getting all entries : failed to decode data_info".into());
+            let res_ke = match &self.config.strip_prefix {
+                Some(prefix) => prefix.join(key_str.as_ref()),
+                None => key_str.as_ref().try_into()
+            };
+            match res_ke {
+                Ok(ke) => {
+                    if let Ok((_, timestamp, _)) = decode_data_info(&buf) {
+                        result.push((ke, timestamp))
+                    } else {
+                        bail!(
+                            "Getting all entries : failed to decode data_info for key '{}'",
+                            key_str
+                        );
+                    }
+                }
+                Err(e) => bail!("Invalid key in database: '{}' - {}", key_str, e)
             }
         }
 
@@ -629,13 +635,6 @@ fn decode_deleted_flag(buf: &[u8]) -> ZResult<bool> {
 
 fn rocksdb_err_to_zerr(err: rocksdb::Error) -> zenoh_core::Error {
     zerror!("Rocksdb error: {}", err.into_string()).into()
-}
-
-pub(crate) fn concat_str<S1: AsRef<str>, S2: AsRef<str>>(s1: S1, s2: S2) -> String {
-    let mut result = String::with_capacity(s1.as_ref().len() + s2.as_ref().len());
-    result.push_str(s1.as_ref());
-    result.push_str(s2.as_ref());
-    result
 }
 
 // Periodic event cleaning-up data info for no-longer existing files
