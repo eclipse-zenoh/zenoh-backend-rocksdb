@@ -329,12 +329,7 @@ impl Storage for RocksdbStorage {
                 .res()
                 .await
             {
-                log::error!(
-                    "Error replying to query on {} with {}: {}",
-                    selector,
-                    ke,
-                    e
-                );
+                log::error!("Error replying to query on {} with {}: {}", selector, ke, e);
             }
         }
 
@@ -352,14 +347,11 @@ impl Storage for RocksdbStorage {
             Some(prefix) => prefix.as_str(),
             None => "",
         };
-        for (key, buf) in db.prefix_iterator_cf(
-            db.cf_handle(CF_DATA_INFO).unwrap(),
-            db_prefix,
-        ) {
+        for (key, buf) in db.prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), db_prefix) {
             let key_str = String::from_utf8_lossy(&key);
             let res_ke = match &self.config.strip_prefix {
                 Some(prefix) => prefix.join(key_str.as_ref()),
-                None => key_str.as_ref().try_into()
+                None => key_str.as_ref().try_into(),
             };
             match res_ke {
                 Ok(ke) => {
@@ -372,7 +364,7 @@ impl Storage for RocksdbStorage {
                         );
                     }
                 }
-                Err(e) => bail!("Invalid key in database: '{}' - {}", key_str, e)
+                Err(e) => bail!("Invalid key in database: '{}' - {}", key_str, e),
             }
         }
 
