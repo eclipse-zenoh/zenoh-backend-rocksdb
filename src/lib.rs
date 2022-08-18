@@ -20,14 +20,14 @@ use std::convert::TryInto;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uhlc::NTP64;
-use zenoh::buf::{WBuf, ZBuf};
+use zenoh::buffers::{reader::*, WBuf, ZBuf};
 use zenoh::prelude::r#async::AsyncResolve;
 use zenoh::prelude::*;
 use zenoh::time::{new_reception_timestamp, Timestamp};
 use zenoh::Result as ZResult;
 use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
 use zenoh_backend_traits::*;
-use zenoh_buffers::traits::reader::HasReader;
+use zenoh_cfg_properties::Properties;
 use zenoh_collections::{Timed, TimedEvent, Timer};
 use zenoh_core::{bail, zerror};
 use zenoh_protocol::io::{WBufCodec, ZBufCodec};
@@ -566,7 +566,7 @@ fn encode_data_info(encoding: &Encoding, timestamp: &Timestamp, deleted: bool) -
     let write_ok = result.write_timestamp(timestamp)
         && result.write_zint(deleted as ZInt)
         && result.write_zint(u8::from(*encoding.prefix()).into())
-        && result.write_string(&*encoding.suffix());
+        && result.write_string(encoding.suffix());
     if !write_ok {
         bail!("Failed to encode data-info")
     } else {
