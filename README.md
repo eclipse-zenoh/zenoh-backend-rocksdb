@@ -170,7 +170,7 @@ $ rustup default 1.57.0
 
 And `zenohd` version corresponds to an un-released commit with id `1f20c86`. Update the `zenoh` dependency in Cargo.lock with this command:
 ```bash
-cargo update -p zenoh --precise 1f20c86
+$ cargo update -p zenoh --precise 1f20c86
 ```
 
 Then build the backend with:
