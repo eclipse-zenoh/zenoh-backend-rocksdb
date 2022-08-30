@@ -46,11 +46,11 @@ You can setup storages either at zenoh router startup via a configuration file, 
         // configuration of "storages" plugin:
         storage_manager: {
           volumes: {
-            // configuration of a "rocksdb" backend (the "zbackend_rocksdb" library will be loaded at startup)
+            // configuration of a "rocksdb" volume (the "zbackend_rocksdb" backend library will be loaded at startup)
             rocksdb: {}
           },
           storages: {
-            // configuration of a "demo" storage using the "rocksdb" backend
+            // configuration of a "demo" storage using the "rocksdb" volume
             demo: {
               // the key expression this storage will subscribes to
               key_expr: "demo/example/**",
@@ -59,7 +59,7 @@ You can setup storages either at zenoh router startup via a configuration file, 
               strip_prefix: "demo/example",
               volume: {
                 id: "rocksdb",
-              // the RocksDB database will be stored in this directory (relative to ${ZBACKEND_ROCKSDB_ROOT})
+                // the RocksDB database will be stored in this directory (relative to ${ZBACKEND_ROCKSDB_ROOT})
                 dir: "example",
                 // create the RocksDB database if not already existing
                 create_db: true
@@ -152,7 +152,7 @@ On GET operations:
 At first, install [Cargo and Rust](https://doc.rust-lang.org/cargo/getting-started/installation.html). 
 
 :warning: **WARNING** :warning: : As Rust doesn't have a stable ABI, the backend library should be
-built with the exact same Rust version than `zenohd`, and using for 'zenoh' dependency the same version (or commit number) than 'zenohd'.
+built with the exact same Rust version than `zenohd`, and using for `zenoh` dependency the same version (or commit number) than 'zenohd'.
 Otherwise, incompatibilities in memory mapping of shared types between `zenohd` and the library can lead to a `"SIGSEV"` crash.
 
 To know the Rust version you're `zenohd` has been built with, use the `--version` option.  
