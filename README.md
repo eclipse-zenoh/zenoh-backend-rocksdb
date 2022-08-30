@@ -53,12 +53,12 @@ You can setup storages either at zenoh router startup via a configuration file, 
             // configuration of a "demo" storage using the "rocksdb" backend
             demo: {
               // the key expression this storage will subscribes to
-              key_expr: "/demo/example/**",
+              key_expr: "demo/example/**",
               // this prefix will be stripped from the received key when converting to database key.
-              // i.e.: "/demo/example/a/b" will be stored as "a/b"
-              strip_prefix: "/demo/example",
+              // i.e.: "demo/example/a/b" will be stored as "a/b"
+              strip_prefix: "demo/example",
               volume: {
-                id: "rocksbd",
+                id: "rocksdb",
               // the RocksDB database will be stored in this directory (relative to ${ZBACKEND_ROCKSDB_ROOT})
                 dir: "example",
                 // create the RocksDB database if not already existing
@@ -66,7 +66,9 @@ You can setup storages either at zenoh router startup via a configuration file, 
               }
             }
           }
-        }
+        },
+        // Optionally, add the REST plugin
+        rest: { http_port: 8000 }
       }
     }
     ```
@@ -80,7 +82,7 @@ You can setup storages either at zenoh router startup via a configuration file, 
   - Add the "rocksdb" backend (the "zbackend_rocksdb" library will be loaded):  
    `curl -X PUT -H 'content-type:application/json' -d '{}' http://localhost:8000/@/router/local/config/plugins/storage_manager/volumes/rocksdb`
   - Add the "demo" storage using the "rocksdb" backend:  
-   `curl -X PUT -H 'content-type:application/json' -d '{key_expr:"/demo/example/**",strip_prefix:"/demo/example",volume: {id: "rocksbd",dir: "example",create_db: true}}' http://localhost:8000/@/router/local/config/plugins/storage_manager/storages/demo`
+   `curl -X PUT -H 'content-type:application/json' -d '{key_expr:"demo/example/**",strip_prefix:"demo/example",volume: {id: "rocksdb",dir: "example",create_db: true}}' http://localhost:8000/@/router/local/config/plugins/storage_manager/storages/demo`
 
 ### **Tests using the REST API**
 
@@ -150,8 +152,8 @@ On GET operations:
 At first, install [Cargo and Rust](https://doc.rust-lang.org/cargo/getting-started/installation.html). 
 
 :warning: **WARNING** :warning: : As Rust doesn't have a stable ABI, the backend library should be
-built with the exact same Rust version than `zenohd`. Otherwise, incompatibilities in memory mapping
-of shared types between `zenohd` and the library can lead to a `"SIGSEV"` crash.
+built with the exact same Rust version than `zenohd`, and using for 'zenoh' dependency the same version (or commit number) than 'zenohd'.
+Otherwise, incompatibilities in memory mapping of shared types between `zenohd` and the library can lead to a `"SIGSEV"` crash.
 
 To know the Rust version you're `zenohd` has been built with, use the `--version` option.  
 Example:
@@ -166,7 +168,12 @@ Install and use this toolchain with the following command:
 $ rustup default 1.57.0
 ```
 
-And then build the backend with:
+And `zenohd` version corresponds to an un-released commit with id `1f20c86`. Update the `zenoh` dependency in Cargo.lock with this command:
+```bash
+cargo update -p zenoh --precise 1f20c86
+```
+
+Then build the backend with:
 
 ```bash
 $ cargo build --release --all-targets
