@@ -349,7 +349,13 @@ impl Storage for RocksdbStorage {
         };
         for (key, buf) in db
             .prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), db_prefix)
-            .filter_map(|r| r.ok())
+            .filter_map(|r| match r {
+                Ok(x) => Some(x),
+                Err(e) => {
+                    warn!("Error iterating over RocksDB: {}", e);
+                    None
+                }
+            })
         {
             let key_str = String::from_utf8_lossy(&key);
             let res_ke = match &self.config.strip_prefix {
@@ -523,7 +529,13 @@ fn find_matching_kv(db: &DB, sub_selector: &str, results: &mut Vec<(String, Valu
     // Iterate over DATA_INFO Column Family to avoid loading payloads possibly for nothing if not matching
     for (key, buf) in db
         .prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), prefix)
-        .filter_map(|r| r.ok())
+        .filter_map(|r| match r {
+            Ok(x) => Some(x),
+            Err(e) => {
+                warn!("Error iterating over RocksDB: {}", e);
+                None
+            }
+        })
     {
         if let Ok(false) = decode_deleted_flag(&buf) {
             let key_str = String::from_utf8_lossy(&key);
@@ -657,7 +669,13 @@ impl Timed for GarbageCollectionEvent {
         let mut count = 0;
         for (key, buf) in db
             .iterator_cf(cf_handle, IteratorMode::Start)
-            .filter_map(|r| r.ok())
+            .filter_map(|r| match r {
+                Ok(x) => Some(x),
+                Err(e) => {
+                    warn!("Error iterating over RocksDB: {}", e);
+                    None
+                }
+            })
         {
             if let Ok(true) = decode_deleted_flag(&buf) {
                 if let Ok(timestamp) = decode_timestamp(&buf) {
