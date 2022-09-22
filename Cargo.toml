@@ -34,14 +34,14 @@ zenoh-protocol = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "api
 zenoh-collections = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "api-changes" }
 zenoh-util = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "api-changes" }
 async-std = "=1.12.0"
-async-trait = "0.1.42"
-uhlc = "0.5.0"
+async-trait = "0.1.57"
+uhlc = "0.5.1"
 lazy_static = "1.4.0"
-env_logger = "0.9.0"
-log = "0.4"
-git-version = "0.3.4"
-rocksdb = "0.18.0"
-serde_json = "1.0"
+env_logger = "0.9.1"
+log = "0.4.17"
+git-version = "0.3.5"
+rocksdb = "0.19.0"
+serde_json = "1.0.85"
 
 [build-dependencies]
 rustc_version = "0.4.0"
