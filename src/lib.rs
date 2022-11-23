@@ -20,7 +20,7 @@ use std::convert::TryInto;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uhlc::NTP64;
-use zenoh::buffers::{reader::*, WBuf, ZBuf};
+use zenoh::buffers::{reader::HasReader, writer::HasWriter};
 use zenoh::prelude::r#async::AsyncResolve;
 use zenoh::prelude::*;
 use zenoh::properties::Properties;
@@ -28,9 +28,9 @@ use zenoh::time::{new_reception_timestamp, Timestamp};
 use zenoh::Result as ZResult;
 use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
 use zenoh_backend_traits::*;
+use zenoh_codec::{RCodec, WCodec, Zenoh060};
 use zenoh_collections::{Timed, TimedEvent, Timer};
 use zenoh_core::{bail, zerror};
-use zenoh_protocol::io::{WBufCodec, ZBufCodec};
 use zenoh_util::zenoh_home;
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
@@ -160,7 +160,7 @@ impl Volume for RocksdbBackend {
         }
         opts.create_missing_column_families(true);
         let db = if read_only {
-            DB::open_cf_for_read_only(&opts, &db_path, &[CF_PAYLOADS, CF_DATA_INFO], true)
+            DB::open_cf_for_read_only(&opts, &db_path, [CF_PAYLOADS, CF_DATA_INFO], true)
         } else {
             let cf_payloads = ColumnFamilyDescriptor::new(CF_PAYLOADS, opts.clone());
             let cf_data_info = ColumnFamilyDescriptor::new(CF_DATA_INFO, opts.clone());
@@ -437,11 +437,7 @@ fn put_kv(
         key,
         value.payload.contiguous(),
     );
-    batch.put_cf(
-        db.cf_handle(CF_DATA_INFO).unwrap(),
-        key,
-        data_info.get_first_slice(..),
-    );
+    batch.put_cf(db.cf_handle(CF_DATA_INFO).unwrap(), key, data_info);
     match db.write(batch) {
         Ok(()) => Ok(StorageInsertionResult::Inserted),
         Err(e) => Err(rocksdb_err_to_zerr(e)),
@@ -456,11 +452,7 @@ fn delete_kv(db: &DB, key: &str, timestamp: Timestamp) -> ZResult<StorageInserti
     // Put deletion timestamp into CF_DATA_INFO Column Family (to avoid re-insertion of older value)
     let mut batch = WriteBatch::default();
     batch.delete_cf(db.cf_handle(CF_PAYLOADS).unwrap(), key);
-    batch.put_cf(
-        db.cf_handle(CF_DATA_INFO).unwrap(),
-        key,
-        data_info.get_first_slice(..),
-    );
+    batch.put_cf(db.cf_handle(CF_DATA_INFO).unwrap(), key, data_info);
     match db.write(batch) {
         Ok(()) => Ok(StorageInsertionResult::Deleted),
         Err(e) => Err(rocksdb_err_to_zerr(e)),
@@ -560,68 +552,63 @@ fn get_timestamp(db: &DB, key: &str) -> ZResult<Option<Timestamp>> {
     }
 }
 
-fn encode_data_info(encoding: &Encoding, timestamp: &Timestamp, deleted: bool) -> ZResult<WBuf> {
-    let mut result: WBuf = WBuf::new(32, true);
+fn encode_data_info(encoding: &Encoding, timestamp: &Timestamp, deleted: bool) -> ZResult<Vec<u8>> {
+    let codec = Zenoh060::default();
+    let mut result = vec![];
+    let mut writer = result.writer();
+
     // note: encode timestamp at first for faster decoding when only this one is required
-    let write_ok = result.write_timestamp(timestamp)
-        && result.write_zint(deleted as ZInt)
-        && result.write_zint(u8::from(*encoding.prefix()).into())
-        && result.write_string(encoding.suffix());
-    if !write_ok {
-        bail!("Failed to encode data-info")
-    } else {
-        Ok(result)
-    }
+    codec
+        .write(&mut writer, timestamp)
+        .map_err(|_| zerror!("Failed to encode data-info (timestamp)"))?;
+    codec
+        .write(&mut writer, deleted as u8)
+        .map_err(|_| zerror!("Failed to encode data-info (deleted)"))?;
+    codec
+        .write(&mut writer, encoding)
+        .map_err(|_| zerror!("Failed to encode data-info (encoding)"))?;
+    Ok(result)
 }
 
 fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
-    let buf = ZBuf::from(buf.to_vec());
-    let mut buf = buf.reader();
-    let timestamp = buf
-        .read_timestamp()
-        .ok_or_else(|| zerror!("Failed to decode data-info (timestamp)"))?;
-    let deleted = buf
-        .read_zint()
-        .ok_or_else(|| zerror!("Failed to decode data-info (encoding.prefix)"))?
-        != 0;
-    let encoding_prefix = buf
-        .read_zint()
-        .ok_or_else(|| zerror!("Failed to decode data-info (encoding.prefix)"))?;
-    let encoding_suffix = buf
-        .read_string()
-        .ok_or_else(|| zerror!("Failed to decode data-info (encoding.suffix)"))?;
-    let encoding_prefix = encoding_prefix
-        .try_into()
-        .map_err(|_| zerror!("Unknown encoding {}", encoding_prefix))?;
-    let encoding = if encoding_suffix.is_empty() {
-        Encoding::Exact(encoding_prefix)
-    } else {
-        Encoding::WithSuffix(encoding_prefix, encoding_suffix.into())
-    };
+    let codec = Zenoh060::default();
+    let mut reader = buf.reader();
+    let timestamp: Timestamp = codec
+        .read(&mut reader)
+        .map_err(|_| zerror!("Failed to decode data-info (timestamp)"))?;
+    let deleted: u8 = codec
+        .read(&mut reader)
+        .map_err(|_| zerror!("Failed to decode data-info (deleted)"))?;
+    let encoding: Encoding = codec
+        .read(&mut reader)
+        .map_err(|_| zerror!("Failed to decode data-info (timestamp)"))?;
+    let deleted = deleted != 0;
+
     Ok((encoding, timestamp, deleted))
 }
 
 // decode the timestamp only
 fn decode_timestamp(buf: &[u8]) -> ZResult<Timestamp> {
-    let buf = ZBuf::from(buf.to_vec());
-    let mut buf = buf.reader();
-    let timestamp = buf
-        .read_timestamp()
-        .ok_or_else(|| zerror!("Failed to decode data-info (timestamp)"))?;
+    let codec = Zenoh060::default();
+    let mut reader = buf.reader();
+    let timestamp: Timestamp = codec
+        .read(&mut reader)
+        .map_err(|_| zerror!("Failed to decode data-info (timestamp)"))?;
     Ok(timestamp)
 }
 
 // decode the deleted flag only
 fn decode_deleted_flag(buf: &[u8]) -> ZResult<bool> {
-    let buf = ZBuf::from(buf.to_vec());
-    let mut buf = buf.reader();
-    let _timestamp = buf
-        .read_timestamp()
-        .ok_or_else(|| zerror!("Failed to decode data-info (timestamp)"))?;
-    let deleted = buf
-        .read_zint()
-        .ok_or_else(|| zerror!("Failed to decode data-info (encoding.prefix)"))?
-        != 0;
+    let codec = Zenoh060::default();
+    let mut reader = buf.reader();
+    let _timestamp: Timestamp = codec
+        .read(&mut reader)
+        .map_err(|_| zerror!("Failed to decode data-info (timestamp)"))?;
+    let deleted: u8 = codec
+        .read(&mut reader)
+        .map_err(|_| zerror!("Failed to decode data-info (deleted)"))?;
+    let deleted = deleted != 0;
+
     Ok(deleted)
 }
 
