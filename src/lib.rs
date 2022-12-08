@@ -349,7 +349,10 @@ impl Storage for RocksdbStorage {
         };
         for result in db.prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), db_prefix) {
             if result.is_err() {
-                bail!("Getting all entries failed with error: '{}'", result.unwrap_err());
+                bail!(
+                    "Getting all entries failed with error: '{}'",
+                    result.unwrap_err()
+                );
             }
             let (key, buf) = result.unwrap();
             let key_str = String::from_utf8_lossy(&key);
@@ -522,40 +525,44 @@ fn find_matching_kv(db: &DB, sub_selector: &str, results: &mut Vec<(String, Valu
     };
 
     // Iterate over DATA_INFO Column Family to avoid loading payloads possibly for nothing if not matching
-    db.prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), prefix).for_each(|result| {
-        if result.is_err() {
-            log::error!("Error finding matching key value: '{}'", result.unwrap_err());
-            return
-        }
-        let (key, buf) = result.unwrap();
-        if let Ok(false) = decode_deleted_flag(&buf) {
-            let key_str = String::from_utf8_lossy(&key);
-            let key_expr = keyexpr::new(key_str.as_ref()).unwrap();
-            if key_expr.intersects(sub_selector) {
-                match db.get_cf(db.cf_handle(CF_PAYLOADS).unwrap(), &key) {
-                    Ok(Some(payload)) => {
-                        if let Ok((encoding, timestamp, _)) = decode_data_info(&buf) {
-                            results.push((
-                                key_str.into_owned(),
-                                Value::new(payload.into()).encoding(encoding),
-                                timestamp,
-                            ))
-                        } else {
-                            warn!(
+    db.prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), prefix)
+        .for_each(|result| {
+            if result.is_err() {
+                log::error!(
+                    "Error finding matching key value: '{}'",
+                    result.unwrap_err()
+                );
+                return;
+            }
+            let (key, buf) = result.unwrap();
+            if let Ok(false) = decode_deleted_flag(&buf) {
+                let key_str = String::from_utf8_lossy(&key);
+                let key_expr = keyexpr::new(key_str.as_ref()).unwrap();
+                if key_expr.intersects(sub_selector) {
+                    match db.get_cf(db.cf_handle(CF_PAYLOADS).unwrap(), &key) {
+                        Ok(Some(payload)) => {
+                            if let Ok((encoding, timestamp, _)) = decode_data_info(&buf) {
+                                results.push((
+                                    key_str.into_owned(),
+                                    Value::new(payload.into()).encoding(encoding),
+                                    timestamp,
+                                ))
+                            } else {
+                                warn!(
                                 "Replying to query on {} : failed to decode data_info for key {}",
                                 sub_selector, key_str
                             )
+                            }
                         }
+                        Ok(None) => (), // data_info exists, but not payload: key was probably deleted
+                        Err(err) => warn!(
+                            "Replying to query on {} : failed get key {} : {}",
+                            sub_selector, key_str, err
+                        ),
                     }
-                    Ok(None) => (), // data_info exists, but not payload: key was probably deleted
-                    Err(err) => warn!(
-                        "Replying to query on {} : failed get key {} : {}",
-                        sub_selector, key_str, err
-                    ),
                 }
             }
-        }
-    });
+        });
 }
 
 fn get_timestamp(db: &DB, key: &str) -> ZResult<Option<Timestamp>> {
