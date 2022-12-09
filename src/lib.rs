@@ -160,7 +160,7 @@ impl Volume for RocksdbBackend {
         }
         opts.create_missing_column_families(true);
         let db = if read_only {
-            DB::open_cf_for_read_only(&opts, &db_path, &[CF_PAYLOADS, CF_DATA_INFO], true)
+            DB::open_cf_for_read_only(&opts, &db_path, [CF_PAYLOADS, CF_DATA_INFO], true)
         } else {
             let cf_payloads = ColumnFamilyDescriptor::new(CF_PAYLOADS, opts.clone());
             let cf_data_info = ColumnFamilyDescriptor::new(CF_DATA_INFO, opts.clone());
