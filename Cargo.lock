@@ -2562,6 +2562,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenoh-backend-rocksdb"
+version = "0.7.0-rc"
+dependencies = [
+ "async-std",
+ "async-trait",
+ "env_logger",
+ "git-version",
+ "lazy_static",
+ "log",
+ "rocksdb",
+ "rustc_version",
+ "serde_json",
+ "uhlc",
+ "zenoh",
+ "zenoh-collections",
+ "zenoh-core",
+ "zenoh-protocol",
+ "zenoh-util",
+ "zenoh_backend_traits",
+]
+
+[[package]]
 name = "zenoh-buffers"
 version = "0.7.0-rc"
 source = "git+https://github.com/eclipse-zenoh/zenoh.git?branch=master#0c49c72b37df37b4020f49495c006af8ef2872c5"
@@ -2886,28 +2908,6 @@ dependencies = [
  "zenoh-core",
  "zenoh-crypto",
  "zenoh-sync",
-]
-
-[[package]]
-name = "zenoh_backend_rocksdb"
-version = "0.7.0-rc"
-dependencies = [
- "async-std",
- "async-trait",
- "env_logger",
- "git-version",
- "lazy_static",
- "log",
- "rocksdb",
- "rustc_version",
- "serde_json",
- "uhlc",
- "zenoh",
- "zenoh-collections",
- "zenoh-core",
- "zenoh-protocol",
- "zenoh-util",
- "zenoh_backend_traits",
 ]
 
 [[package]]
