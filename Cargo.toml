@@ -24,8 +24,8 @@ authors = [
 ]
 edition = "2018"
 license = " EPL-2.0 OR Apache-2.0"
-categories = ["network-programming"]
-description = "Backend for Zenoh using the file system"
+categories = ["network-programming", "database"]
+description = "Backend for Zenoh using RocksDB"
 
 [lib]
 name = "zbackend_rocksdb"
