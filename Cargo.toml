@@ -12,8 +12,10 @@
 #   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 #
 [package]
-name = "zenoh_backend_rocksdb"
-version = "0.6.0-beta.1"
+name = "zenoh-backend-rocksdb"
+version = "0.7.0-rc"
+repository = "https://github.com/eclipse-zenoh/zenoh-backend-rocksdb"
+homepage = "http://zenoh.io"
 authors = [
   "kydos <angelo@icorsaro.net>",
   "Julien Enoch <julien@enoch.fr>",
@@ -21,15 +23,18 @@ authors = [
   "Luca Cominardi <luca.cominardi@zettascale.tech>",
 ]
 edition = "2018"
+license = " EPL-2.0 OR Apache-2.0"
+categories = ["network-programming", "database"]
+description = "Backend for Zenoh using RocksDB"
 
 [lib]
 name = "zbackend_rocksdb"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 async-std = "=1.12.0"
 async-trait = "0.1.57"
-env_logger = "0.9.1"
+env_logger = "0.10.0"
 git-version = "0.3.5"
 lazy_static = "1.4.0"
 log = "0.4.17"
@@ -53,4 +58,4 @@ maintainer = "zenoh-dev@eclipse.org"
 copyright = "2022 ZettaScale Technology"
 section = "net"
 license-file = ["LICENSE", "0"]
-depends = "zenoh-plugin-storage-manager (=0.6.0~dev.0)"
+depends = "zenoh-plugin-storage-manager (=0.7.0-rc)"
