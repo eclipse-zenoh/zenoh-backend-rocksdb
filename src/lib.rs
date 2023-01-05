@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uhlc::NTP64;
 use zenoh::buffers::{reader::*, WBuf, ZBuf};
-use zenoh::prelude::r#async::AsyncResolve;
+// use zenoh::prelude::r#async::AsyncResolve;
 use zenoh::prelude::*;
 use zenoh::properties::Properties;
 use zenoh::time::{new_reception_timestamp, Timestamp};
@@ -102,6 +102,14 @@ pub struct RocksdbBackend {
 impl Volume for RocksdbBackend {
     fn get_admin_status(&self) -> serde_json::Value {
         self.admin_status.clone()
+    }
+
+    fn get_capability(&self) -> Capability {
+        Capability {
+            persistence: Persistence::Durable,
+            history: History::Latest,
+            read_cost: 0,
+        }
     }
 
     async fn create_storage(&mut self, config: StorageConfig) -> ZResult<Box<dyn Storage>> {
@@ -219,121 +227,54 @@ impl Storage for RocksdbStorage {
         self.config.to_json_value()
     }
 
-    // When receiving a Sample (i.e. on PUT or DELETE operations)
-    async fn on_sample(&mut self, sample: Sample) -> ZResult<StorageInsertionResult> {
-        // the key in rocksdb is the path stripped from "path_prefix", if specified
-        let key = match &self.config.strip_prefix {
-            Some(prefix) => match sample.key_expr.strip_prefix(prefix).as_slice() {
-                [ke] => ke.as_str(),
-                _ => bail!(
-                    "Received a Sample with keyexpr not starting with path_prefix '{}': '{}'",
-                    prefix,
-                    sample.key_expr
-                ),
-            },
-            None => sample.key_expr.as_str(),
-        };
-
+    // When receiving a PUT operation
+    async fn put(&mut self, key: OwnedKeyExpr, sample: Sample) -> ZResult<StorageInsertionResult> {
         // Get lock on DB
         let db_cell = self.db.lock().await;
         let db = db_cell.as_ref().unwrap();
 
-        // get latest timestamp for this key (if already exists in db)
-        // and drop incoming sample if older
-        let sample_ts = sample.timestamp.unwrap_or_else(new_reception_timestamp);
-        if let Some(old_ts) = get_timestamp(db, key)? {
-            if sample_ts < old_ts {
-                debug!(
-                    "{} on {} dropped: out-of-date",
-                    sample.kind, sample.key_expr
-                );
-                return Ok(StorageInsertionResult::Outdated);
-            }
-        }
-
-        // Store or delete the sample depending the ChangeKind
-        match sample.kind {
-            SampleKind::Put => {
-                if !self.read_only {
-                    // put payload and data_info in DB
-                    put_kv(db, key, sample.value, sample_ts)
-                } else {
-                    warn!("Received PUT for read-only DB on {:?} - ignored", key);
-                    Err("Received update for read-only DB".into())
-                }
-            }
-            SampleKind::Delete => {
-                if !self.read_only {
-                    // delete file
-                    delete_kv(db, key, sample_ts)
-                } else {
-                    warn!("Received DELETE for read-only DB on {:?} - ignored", key);
-                    Err("Received update for read-only DB".into())
-                }
-            }
+        // Store the sample
+        trace!("Storing key, sample: {} : {}", key, sample);
+        if !self.read_only {
+            // put payload and data_info in DB
+            put_kv(db, &key, sample.value, sample.timestamp.unwrap())
+        } else {
+            warn!("Received PUT for read-only DB on {:?} - ignored", key);
+            Err("Received update for read-only DB".into())
         }
     }
 
-    // When receiving a Query (i.e. on GET operations)
-    async fn on_query(&mut self, query: Query) -> ZResult<()> {
-        // get the query's Selector
-        let selector = query.selector();
-
-        // if strip_prefix is set, strip it from the Selector's keyexpr to get the list of sub-keyexpr
-        // that will match the same stored keys than the selector, if those keys had the path_prefix.
-        let sub_keyexpr = match &self.config.strip_prefix {
-            Some(prefix) => {
-                let vec = selector.key_expr.strip_prefix(prefix);
-                if vec.is_empty() {
-                    warn!("Received query on selector '{}', but the configured strip_prefix='{:?}' is not a prefix of this selector", selector, self.config.strip_prefix);
-                }
-                vec
-            }
-            None => vec![selector.key_expr.as_keyexpr()],
-        };
-
+    // When receiving a DEL operation
+    async fn delete(&mut self, key: OwnedKeyExpr) -> ZResult<StorageInsertionResult> {
         // Get lock on DB
         let db_cell = self.db.lock().await;
         let db = db_cell.as_ref().unwrap();
 
-        // Get all matching keys/values
-        let mut kvs: Vec<(String, Value, Timestamp)> = Vec::with_capacity(sub_keyexpr.len());
-        for ke in sub_keyexpr {
-            if ke.contains('*') {
-                find_matching_kv(db, ke, &mut kvs);
-            } else {
-                // path_expr correspond to 1 key. Get it.
-                match get_kv(db, ke) {
-                    Ok(Some((value, timestamp))) => kvs.push((ke.to_string(), value, timestamp)),
-                    Ok(None) => (), // key not found, do nothing
-                    Err(e) => warn!(
-                        "Replying to query on {} : failed get key {} : {}",
-                        selector, ke, e
-                    ),
-                }
-            }
+        trace!("Deleting key: {}", key);
+        if !self.read_only {
+            // delete file
+            delete_kv(db, &key)
+        } else {
+            warn!("Received DELETE for read-only DB on {:?} - ignored", key);
+            Err("Received update for read-only DB".into())
         }
+    }
 
-        // Release lock on DB
-        drop(db_cell);
+    // When receiving a GET operation
+    async fn get(&mut self, key_expr: OwnedKeyExpr, _parameters: &str) -> ZResult<Sample> {
+        // Get lock on DB
+        let db_cell = self.db.lock().await;
+        let db = db_cell.as_ref().unwrap();
 
-        // Send replies
-        for (key, value, timestamp) in kvs {
-            // if strip_prefix is set, prefix it back to the zenoh path of this ZFile
-            let ke = match &self.config.strip_prefix {
-                Some(prefix) => prefix.join(&key).unwrap(),
-                None => key.try_into().unwrap(),
-            };
-            if let Err(e) = query
-                .reply(Sample::new(ke.clone(), value).with_timestamp(timestamp))
-                .res()
-                .await
-            {
-                log::error!("Error replying to query on {} with {}: {}", selector, ke, e);
+        // Get the matching key/value
+        trace!("getting key `{}` with parameters `{}`", key_expr, _parameters);
+        match get_kv(db, &key_expr) {
+            Ok(Some((value, timestamp))) => {
+                Ok(Sample::new(key_expr, value).with_timestamp(timestamp))
             }
+            Ok(None) => Err(format!("Entry not found for key `{}`", key_expr).into()),
+            Err(e) => Err(format!("Error when getting key {} : {}", key_expr, e).into()),
         }
-
-        Ok(())
     }
 
     async fn get_all_entries(&self) -> ZResult<Vec<(OwnedKeyExpr, Timestamp)>> {
@@ -448,19 +389,14 @@ fn put_kv(
     }
 }
 
-fn delete_kv(db: &DB, key: &str, timestamp: Timestamp) -> ZResult<StorageInsertionResult> {
+fn delete_kv(db: &DB, key: &str) -> ZResult<StorageInsertionResult> {
     trace!("Delete key {} from {:?}", key, db);
-    let data_info = encode_data_info(&KnownEncoding::Empty.into(), &timestamp, true)?;
 
     // Delete key from CF_PAYLOADS Column Family
-    // Put deletion timestamp into CF_DATA_INFO Column Family (to avoid re-insertion of older value)
+    // Delete key from  CF_DATA_INFO Column Family (to remove metadata information)
     let mut batch = WriteBatch::default();
     batch.delete_cf(db.cf_handle(CF_PAYLOADS).unwrap(), key);
-    batch.put_cf(
-        db.cf_handle(CF_DATA_INFO).unwrap(),
-        key,
-        data_info.get_first_slice(..),
-    );
+    batch.delete_cf(db.cf_handle(CF_DATA_INFO).unwrap(), key);
     match db.write(batch) {
         Ok(()) => Ok(StorageInsertionResult::Deleted),
         Err(e) => Err(rocksdb_err_to_zerr(e)),
@@ -475,6 +411,7 @@ fn get_kv(db: &DB, key: &str) -> ZResult<Option<(Value, Timestamp)>> {
         db.get_cf(db.cf_handle(CF_DATA_INFO).unwrap(), key),
     ) {
         (Ok(Some(payload)), Ok(Some(info))) => {
+            trace!("first ok");
             let (encoding, timestamp, deleted) = decode_data_info(&info)?;
             if deleted {
                 Ok(None)
@@ -486,6 +423,7 @@ fn get_kv(db: &DB, key: &str) -> ZResult<Option<(Value, Timestamp)>> {
             }
         }
         (Ok(Some(payload)), Ok(None)) => {
+            trace!("second ok");
             // Only the payload is present in DB!
             // Possibly legacy data. Consider as encoding as APP_OCTET_STREAM and create timestamp from now()
             Ok(Some((
@@ -495,68 +433,6 @@ fn get_kv(db: &DB, key: &str) -> ZResult<Option<(Value, Timestamp)>> {
         }
         (Ok(None), _) => Ok(None),
         (Err(err), _) | (_, Err(err)) => Err(rocksdb_err_to_zerr(err)),
-    }
-}
-
-fn find_matching_kv(db: &DB, sub_selector: &str, results: &mut Vec<(String, Value, Timestamp)>) {
-    // Use Rocksdb prefix seek for faster search
-    let prefix = &sub_selector[..sub_selector.find('*').unwrap()];
-    trace!(
-        "Find keys matching {} from {:?} using prefix seek with '{}'",
-        sub_selector,
-        db,
-        prefix
-    );
-    let expr_end = sub_selector.find('/').unwrap_or(sub_selector.len());
-    let sub_selector = &sub_selector[..expr_end];
-    let sub_selector = match keyexpr::new(sub_selector) {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("`{}` couldn't be made into a keyexpr: {}", sub_selector, e);
-            return;
-        }
-    };
-
-    // Iterate over DATA_INFO Column Family to avoid loading payloads possibly for nothing if not matching
-    for (key, buf) in db.prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), prefix) {
-        if let Ok(false) = decode_deleted_flag(&buf) {
-            let key_str = String::from_utf8_lossy(&key);
-            let key_expr = keyexpr::new(key_str.as_ref()).unwrap();
-            if key_expr.intersects(sub_selector) {
-                match db.get_cf(db.cf_handle(CF_PAYLOADS).unwrap(), &key) {
-                    Ok(Some(payload)) => {
-                        if let Ok((encoding, timestamp, _)) = decode_data_info(&buf) {
-                            results.push((
-                                key_str.into_owned(),
-                                Value::new(payload.into()).encoding(encoding),
-                                timestamp,
-                            ))
-                        } else {
-                            warn!(
-                                "Replying to query on {} : failed to decode data_info for key {}",
-                                sub_selector, key_str
-                            )
-                        }
-                    }
-                    Ok(None) => (), // data_info exists, but not payload: key was probably deleted
-                    Err(err) => warn!(
-                        "Replying to query on {} : failed get key {} : {}",
-                        sub_selector, key_str, err
-                    ),
-                }
-            }
-        }
-    }
-}
-
-fn get_timestamp(db: &DB, key: &str) -> ZResult<Option<Timestamp>> {
-    match db.get_pinned_cf(db.cf_handle(CF_DATA_INFO).unwrap(), key) {
-        Ok(Some(pin_val)) => decode_timestamp(pin_val.as_ref()).map(Some),
-        Ok(None) => {
-            trace!("timestamp for {:?} not found", key);
-            Ok(None)
-        }
-        Err(e) => bail!("Failed to get data-info for {:?}: {}", key, e),
     }
 }
 
