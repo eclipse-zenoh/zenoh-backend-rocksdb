@@ -29,9 +29,8 @@ use zenoh::Result as ZResult;
 use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
 use zenoh_backend_traits::*;
 use zenoh_codec::{RCodec, WCodec, Zenoh060};
-use zenoh_collections::{Timed, TimedEvent, Timer};
 use zenoh_core::{bail, zerror};
-use zenoh_util::zenoh_home;
+use zenoh_util::{zenoh_home, Timed, TimedEvent, Timer};
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
 pub const SCOPE_ENV_VAR: &str = "ZBACKEND_ROCKSDB_ROOT";
