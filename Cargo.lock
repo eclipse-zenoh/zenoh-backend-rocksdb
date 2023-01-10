@@ -2178,20 +2178,6 @@ checksum = "9e79c4d996edb816c91e4308506774452e55e95c3c9de07b6729e17e15a5ef81"
 [[package]]
 name = "uhlc"
 version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7908438f98a5824af02b34c2b31fb369c5764ef835d26df0badbb9897fb28245"
-dependencies = [
- "hex",
- "humantime",
- "lazy_static",
- "log",
- "serde",
- "uuid",
-]
-
-[[package]]
-name = "uhlc"
-version = "0.5.1"
 source = "git+https://github.com/atolab/uhlc-rs.git#956d7944e3e546cf1dc8c1d1c083bfadfef877ae"
 dependencies = [
  "hex",
@@ -2608,7 +2594,7 @@ dependencies = [
  "serde_json",
  "socket2",
  "stop-token",
- "uhlc 0.5.1 (git+https://github.com/atolab/uhlc-rs.git)",
+ "uhlc",
  "uuid",
  "vec_map",
  "zenoh-buffers",
@@ -2640,7 +2626,7 @@ dependencies = [
  "rocksdb",
  "rustc_version",
  "serde_json",
- "uhlc 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "uhlc",
  "zenoh",
  "zenoh-codec",
  "zenoh-collections",
@@ -2672,7 +2658,7 @@ name = "zenoh-codec"
 version = "0.7.0-rc"
 source = "git+https://github.com/eclipse-zenoh/zenoh?branch=master#1082f907fb9f9a6375131e814a784397069844e8"
 dependencies = [
- "uhlc 0.5.1 (git+https://github.com/atolab/uhlc-rs.git)",
+ "uhlc",
  "zenoh-buffers",
  "zenoh-protocol",
  "zenoh-shm",
@@ -2912,7 +2898,7 @@ dependencies = [
  "hex",
  "rand",
  "serde",
- "uhlc 0.5.1 (git+https://github.com/atolab/uhlc-rs.git)",
+ "uhlc",
  "uuid",
  "zenoh-buffers",
  "zenoh-core",
