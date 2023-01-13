@@ -16,7 +16,6 @@ use async_std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use log::{debug, error, trace, warn};
 use rocksdb::{ColumnFamilyDescriptor, IteratorMode, Options, WriteBatch, DB};
-use std::convert::TryInto;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uhlc::NTP64;
@@ -243,7 +242,11 @@ impl Storage for RocksdbStorage {
     }
 
     // When receiving a DEL operation
-    async fn delete(&mut self, key: OwnedKeyExpr, _timestamp: Timestamp) -> ZResult<StorageInsertionResult> {
+    async fn delete(
+        &mut self,
+        key: OwnedKeyExpr,
+        _timestamp: Timestamp,
+    ) -> ZResult<StorageInsertionResult> {
         // Get lock on DB
         let db_cell = self.db.lock().await;
         let db = db_cell.as_ref().unwrap();
@@ -259,16 +262,20 @@ impl Storage for RocksdbStorage {
     }
 
     // When receiving a GET operation
-    async fn get(&mut self, key_expr: OwnedKeyExpr, _parameters: &str) -> ZResult<Sample> {
+    async fn get(&mut self, key_expr: OwnedKeyExpr, _parameters: &str) -> ZResult<Vec<Sample>> {
         // Get lock on DB
         let db_cell = self.db.lock().await;
         let db = db_cell.as_ref().unwrap();
 
         // Get the matching key/value
-        trace!("getting key `{}` with parameters `{}`", key_expr, _parameters);
+        trace!(
+            "getting key `{}` with parameters `{}`",
+            key_expr,
+            _parameters
+        );
         match get_kv(db, &key_expr) {
             Ok(Some((value, timestamp))) => {
-                Ok(Sample::new(key_expr, value).with_timestamp(timestamp))
+                Ok(vec![Sample::new(key_expr, value).with_timestamp(timestamp)])
             }
             Ok(None) => Err(format!("Entry not found for key `{}`", key_expr).into()),
             Err(e) => Err(format!("Error when getting key {} : {}", key_expr, e).into()),
@@ -288,10 +295,6 @@ impl Storage for RocksdbStorage {
         };
         for (key, buf) in db.prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), db_prefix) {
             let key_str = String::from_utf8_lossy(&key);
-            // let res_ke = match &self.config.strip_prefix {
-            //     Some(prefix) => prefix.join(key_str.as_ref()),
-            //     None => key_str.as_ref().try_into(),
-            // };
             let res_ke = OwnedKeyExpr::new(key_str.as_ref());
             match res_ke {
                 Ok(ke) => {
@@ -386,7 +389,6 @@ fn put_kv(
 
 fn delete_kv(db: &DB, key: &str) -> ZResult<StorageInsertionResult> {
     trace!("Delete key {} from {:?}", key, db);
-
     // Delete key from CF_PAYLOADS Column Family
     // Delete key from  CF_DATA_INFO Column Family (to remove metadata information)
     let mut batch = WriteBatch::default();
