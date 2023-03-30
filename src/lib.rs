@@ -15,9 +15,9 @@
 use async_std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use log::{debug, error, trace, warn};
-use rocksdb::{ColumnFamilyDescriptor, IteratorMode, Options, WriteBatch, DB};
+use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch, DB};
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use uhlc::NTP64;
 use zenoh::buffers::{reader::HasReader, writer::HasWriter};
 use zenoh::prelude::*;
@@ -28,7 +28,7 @@ use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
 use zenoh_backend_traits::*;
 use zenoh_codec::{RCodec, WCodec, Zenoh060};
 use zenoh_core::{bail, zerror};
-use zenoh_util::{zenoh_home, Timed, TimedEvent, Timer};
+use zenoh_util::zenoh_home;
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
 pub const SCOPE_ENV_VAR: &str = "ZBACKEND_ROCKSDB_ROOT";
@@ -36,14 +36,17 @@ pub const SCOPE_ENV_VAR: &str = "ZBACKEND_ROCKSDB_ROOT";
 /// The default root (whithin zenoh's home directory) if the ZBACKEND_ROCKSDB_ROOT environment variable is not specified.
 pub const DEFAULT_ROOT_DIR: &str = "zbackend_rocksdb";
 
-// Properies used by the Backend
+// Properties used by the Backend
 //  - None
 
-// Properies used by the Storage
+// Properties used by the Storage
 pub const PROP_STORAGE_DIR: &str = "dir";
 pub const PROP_STORAGE_CREATE_DB: &str = "create_db";
 pub const PROP_STORAGE_READ_ONLY: &str = "read_only";
 pub const PROP_STORAGE_ON_CLOSURE: &str = "on_closure";
+
+// Special key for None (when the prefix being stripped exactly matches the key)
+pub const NONE_KEY: &str = "@@none_key@@";
 
 // Column family names
 const CF_PAYLOADS: &str = rocksdb::DEFAULT_COLUMN_FAMILY_NAME;
@@ -180,21 +183,11 @@ impl Volume for RocksdbBackend {
         })?;
         let db = Arc::new(Mutex::new(Some(db)));
 
-        let timer = if read_only {
-            None
-        } else {
-            // start periodic GC event
-            let t = Timer::default();
-            let gc = TimedEvent::periodic(*GC_PERIOD, GarbageCollectionEvent { db: db.clone() });
-            let _ = t.add_async(gc).await;
-            Some(t)
-        };
         Ok(Box::new(RocksdbStorage {
             config,
             on_closure,
             read_only,
             db,
-            timer,
         }))
     }
 
@@ -213,9 +206,6 @@ struct RocksdbStorage {
     read_only: bool,
     // Note: rocksdb isn't thread-safe. See https://github.com/rust-rocksdb/rust-rocksdb/issues/404
     db: Arc<Mutex<Option<DB>>>,
-    // Note: Timer is kept to not be dropped and keep the GC periodic event running
-    #[allow(dead_code)]
-    timer: Option<Timer>,
 }
 
 #[async_trait]
@@ -225,16 +215,24 @@ impl Storage for RocksdbStorage {
     }
 
     // When receiving a PUT operation
-    async fn put(&mut self, key: OwnedKeyExpr, sample: Sample) -> ZResult<StorageInsertionResult> {
+    async fn put(
+        &mut self,
+        key: Option<OwnedKeyExpr>,
+        value: Value,
+        timestamp: Timestamp,
+    ) -> ZResult<StorageInsertionResult> {
         // Get lock on DB
         let db_cell = self.db.lock().await;
         let db = db_cell.as_ref().unwrap();
 
         // Store the sample
-        trace!("Storing key, sample: {} : {}", key, sample);
+        debug!(
+            "Storing key, and value with timestamp: {:?} : {}",
+            key, timestamp
+        );
         if !self.read_only {
             // put payload and data_info in DB
-            put_kv(db, &key, sample.value, sample.timestamp.unwrap())
+            put_kv(db, key, value, timestamp)
         } else {
             warn!("Received PUT for read-only DB on {:?} - ignored", key);
             Err("Received update for read-only DB".into())
@@ -244,17 +242,17 @@ impl Storage for RocksdbStorage {
     // When receiving a DEL operation
     async fn delete(
         &mut self,
-        key: OwnedKeyExpr,
+        key: Option<OwnedKeyExpr>,
         _timestamp: Timestamp,
     ) -> ZResult<StorageInsertionResult> {
         // Get lock on DB
         let db_cell = self.db.lock().await;
         let db = db_cell.as_ref().unwrap();
 
-        trace!("Deleting key: {}", key);
+        debug!("Deleting key: {:?}", key);
         if !self.read_only {
             // delete file
-            delete_kv(db, &key)
+            delete_kv(db, key)
         } else {
             warn!("Received DELETE for read-only DB on {:?} - ignored", key);
             Err("Received update for read-only DB".into())
@@ -262,27 +260,25 @@ impl Storage for RocksdbStorage {
     }
 
     // When receiving a GET operation
-    async fn get(&mut self, key_expr: OwnedKeyExpr, _parameters: &str) -> ZResult<Vec<Sample>> {
+    async fn get(
+        &mut self,
+        key: Option<OwnedKeyExpr>,
+        _parameters: &str,
+    ) -> ZResult<Vec<StoredData>> {
         // Get lock on DB
         let db_cell = self.db.lock().await;
         let db = db_cell.as_ref().unwrap();
 
         // Get the matching key/value
-        trace!(
-            "getting key `{}` with parameters `{}`",
-            key_expr,
-            _parameters
-        );
-        match get_kv(db, &key_expr) {
-            Ok(Some((value, timestamp))) => {
-                Ok(vec![Sample::new(key_expr, value).with_timestamp(timestamp)])
-            }
-            Ok(None) => Err(format!("Entry not found for key `{}`", key_expr).into()),
-            Err(e) => Err(format!("Error when getting key {} : {}", key_expr, e).into()),
+        debug!("getting key `{:?}` with parameters `{}`", key, _parameters);
+        match get_kv(db, key.clone()) {
+            Ok(Some((value, timestamp))) => Ok(vec![StoredData { value, timestamp }]),
+            Ok(None) => Err(format!("Entry not found for key `{:?}`", key.clone()).into()),
+            Err(e) => Err(format!("Error when getting key {:?} : {}", key, e).into()),
         }
     }
 
-    async fn get_all_entries(&self) -> ZResult<Vec<(OwnedKeyExpr, Timestamp)>> {
+    async fn get_all_entries(&self) -> ZResult<Vec<(Option<OwnedKeyExpr>, Timestamp)>> {
         let mut result = Vec::new();
 
         let db_cell = self.db.lock().await;
@@ -295,19 +291,21 @@ impl Storage for RocksdbStorage {
         };
         for (key, buf) in db.prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), db_prefix) {
             let key_str = String::from_utf8_lossy(&key);
-            let res_ke = OwnedKeyExpr::new(key_str.as_ref());
-            match res_ke {
-                Ok(ke) => {
-                    if let Ok((_, timestamp, _)) = decode_data_info(&buf) {
-                        result.push((ke, timestamp))
-                    } else {
-                        bail!(
-                            "Getting all entries : failed to decode data_info for key '{}'",
-                            key_str
-                        );
-                    }
+            let res_ke = if key_str == NONE_KEY {
+                None
+            } else {
+                match OwnedKeyExpr::new(key_str.as_ref()) {
+                    Ok(ke) => Some(ke),
+                    Err(e) => bail!("Invalid key in database: '{}' - {}", key_str, e),
                 }
-                Err(e) => bail!("Invalid key in database: '{}' - {}", key_str, e),
+            };
+            if let Ok((_, timestamp, _)) = decode_data_info(&buf) {
+                result.push((res_ke, timestamp))
+            } else {
+                bail!(
+                    "Getting all entries : failed to decode data_info for key '{}'",
+                    key_str
+                );
             }
         }
 
@@ -322,11 +320,6 @@ impl Drop for RocksdbStorage {
             // (avoiding RocksDB lock to be taken twice)
             let mut db_cell = self.db.lock().await;
             let db = db_cell.take().unwrap();
-
-            // Stop GC
-            if let Some(t) = &mut self.timer {
-                t.stop_async().await;
-            }
 
             // Flush all
             if let Err(err) = db.flush() {
@@ -366,46 +359,59 @@ impl Drop for RocksdbStorage {
 
 fn put_kv(
     db: &DB,
-    key: &str,
+    key: Option<OwnedKeyExpr>,
     value: Value,
     timestamp: Timestamp,
 ) -> ZResult<StorageInsertionResult> {
-    trace!("Put key {} in {:?}", key, db);
+    trace!("Put key {:?} in {:?}", key, db);
     let data_info = encode_data_info(&value.encoding, &timestamp, false)?;
 
+    let key = match key {
+        Some(k) => k.to_string(),
+        None => NONE_KEY.to_string(),
+    };
     // Write content and encoding+timestamp in different Column Families
     let mut batch = WriteBatch::default();
     batch.put_cf(
         db.cf_handle(CF_PAYLOADS).unwrap(),
-        key,
+        &key,
         value.payload.contiguous(),
     );
-    batch.put_cf(db.cf_handle(CF_DATA_INFO).unwrap(), key, data_info);
+    batch.put_cf(db.cf_handle(CF_DATA_INFO).unwrap(), &key, data_info);
+
     match db.write(batch) {
         Ok(()) => Ok(StorageInsertionResult::Inserted),
         Err(e) => Err(rocksdb_err_to_zerr(e)),
     }
 }
 
-fn delete_kv(db: &DB, key: &str) -> ZResult<StorageInsertionResult> {
-    trace!("Delete key {} from {:?}", key, db);
+fn delete_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<StorageInsertionResult> {
+    trace!("Delete key {:?} from {:?}", key, db);
     // Delete key from CF_PAYLOADS Column Family
     // Delete key from  CF_DATA_INFO Column Family (to remove metadata information)
     let mut batch = WriteBatch::default();
-    batch.delete_cf(db.cf_handle(CF_PAYLOADS).unwrap(), key);
-    batch.delete_cf(db.cf_handle(CF_DATA_INFO).unwrap(), key);
+    let key = match key {
+        Some(k) => k.to_string(),
+        None => NONE_KEY.to_string(),
+    };
+    batch.delete_cf(db.cf_handle(CF_PAYLOADS).unwrap(), &key);
+    batch.delete_cf(db.cf_handle(CF_DATA_INFO).unwrap(), &key);
     match db.write(batch) {
         Ok(()) => Ok(StorageInsertionResult::Deleted),
         Err(e) => Err(rocksdb_err_to_zerr(e)),
     }
 }
 
-fn get_kv(db: &DB, key: &str) -> ZResult<Option<(Value, Timestamp)>> {
-    trace!("Get key {} from {:?}", key, db);
+fn get_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<Option<(Value, Timestamp)>> {
+    trace!("Get key {:?} from {:?}", key, db);
     // TODO: use MultiGet when available (see https://github.com/rust-rocksdb/rust-rocksdb/issues/485)
+    let key = match key {
+        Some(k) => k.to_string(),
+        None => NONE_KEY.to_string(),
+    };
     match (
-        db.get_cf(db.cf_handle(CF_PAYLOADS).unwrap(), key),
-        db.get_cf(db.cf_handle(CF_DATA_INFO).unwrap(), key),
+        db.get_cf(db.cf_handle(CF_PAYLOADS).unwrap(), &key),
+        db.get_cf(db.cf_handle(CF_DATA_INFO).unwrap(), &key),
     ) {
         (Ok(Some(payload)), Ok(Some(info))) => {
             trace!("first ok");
@@ -468,74 +474,6 @@ fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
     Ok((encoding, timestamp, deleted))
 }
 
-// decode the timestamp only
-fn decode_timestamp(buf: &[u8]) -> ZResult<Timestamp> {
-    let codec = Zenoh060::default();
-    let mut reader = buf.reader();
-    let timestamp: Timestamp = codec
-        .read(&mut reader)
-        .map_err(|_| zerror!("Failed to decode data-info (timestamp)"))?;
-    Ok(timestamp)
-}
-
-// decode the deleted flag only
-fn decode_deleted_flag(buf: &[u8]) -> ZResult<bool> {
-    let codec = Zenoh060::default();
-    let mut reader = buf.reader();
-    let _timestamp: Timestamp = codec
-        .read(&mut reader)
-        .map_err(|_| zerror!("Failed to decode data-info (timestamp)"))?;
-    let deleted: u8 = codec
-        .read(&mut reader)
-        .map_err(|_| zerror!("Failed to decode data-info (deleted)"))?;
-    let deleted = deleted != 0;
-
-    Ok(deleted)
-}
-
 fn rocksdb_err_to_zerr(err: rocksdb::Error) -> zenoh_core::Error {
     zerror!("Rocksdb error: {}", err.into_string()).into()
-}
-
-// Periodic event cleaning-up data info for no-longer existing files
-struct GarbageCollectionEvent {
-    db: Arc<Mutex<Option<DB>>>,
-}
-
-#[async_trait]
-impl Timed for GarbageCollectionEvent {
-    async fn run(&mut self) {
-        trace!("Start garbage collection of obsolete data-infos");
-        let time_limit = NTP64::from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap())
-            - *MIN_DELAY_BEFORE_REMOVAL;
-
-        // Get lock on DB
-        let db_cell = self.db.lock().await;
-        let db = db_cell.as_ref().unwrap();
-
-        // prepare a batch with all keys to delete
-        let cf_handle = db.cf_handle(CF_DATA_INFO).unwrap();
-        let mut batch = WriteBatch::default();
-        let mut count = 0;
-        for (key, buf) in db.iterator_cf(cf_handle, IteratorMode::Start) {
-            if let Ok(true) = decode_deleted_flag(&buf) {
-                if let Ok(timestamp) = decode_timestamp(&buf) {
-                    if timestamp.get_time() < &time_limit {
-                        batch.delete_cf(cf_handle, key);
-                        count += 1;
-                    }
-                }
-            }
-        }
-
-        // write batch
-        if count > 0 {
-            trace!("Garbage collect {} old data-info", count);
-            if let Err(err) = db.write(batch).map_err(rocksdb_err_to_zerr) {
-                warn!("Failed to clean-up old data-info : {}", err);
-            }
-        }
-
-        trace!("End garbage collection of obsolete data-infos");
-    }
 }
