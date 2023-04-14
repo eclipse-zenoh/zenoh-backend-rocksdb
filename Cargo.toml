@@ -21,6 +21,7 @@ authors = [
   "Julien Enoch <julien@enoch.fr>",
   "Olivier Hécart <olivier.hecart@zettascale.tech>",
   "Luca Cominardi <luca.cominardi@zettascale.tech>",
+  "Sreeja Nair <sreeja.nair@zettascale.tech>",
 ]
 edition = "2018"
 license = " EPL-2.0 OR Apache-2.0"
@@ -47,6 +48,7 @@ zenoh-collections = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "
 zenoh-core = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "master" }
 zenoh-protocol = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "master" }
 zenoh-util = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "master" }
+zenoh-keyexpr = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "master" }
 zenoh_backend_traits = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "master" }
 
 [build-dependencies]
