@@ -285,7 +285,8 @@ impl Storage for RocksdbStorage {
         let db = db_cell.as_ref().unwrap();
 
         // Iterate over DATA_INFO Column Family to avoid loading payloads
-        for (key, buf) in db.prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), "") {
+        for item in db.prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), "") {
+            let (key, buf) = item.map_err(|e| zerror!("{}", e))?;
             let key_str = String::from_utf8_lossy(&key);
             let res_ke = if key_str == NONE_KEY {
                 None
