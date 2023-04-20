@@ -21,7 +21,7 @@ keys/values publications made via zenoh and return them on queries.
 See the [zenoh documentation](http://zenoh.io/docs/manual/backends/) for more details.
 
 This backend relies on [RocksDB](https://rocksdb.org/) to implement the storages.
-Its library name (without OS specific prefix and extension) that zenoh will rely on to find it and load it is **`zbackend_rocksdb`**.
+Its library name (without OS specific prefix and extension) that zenoh will rely on to find it and load it is **`zenoh_backend_rocksdb`**.
 
 :point_right: **Install latest release:** see [below](#How-to-install-it)
 
@@ -39,9 +39,9 @@ For previous versions see the README and code of the corresponding tagged versio
 ## **Examples of usage**
 
 Prerequisites:
- - You have a zenoh router (`zenohd`) installed, and the `zbackend_rocksdb` library file is available in `~/.zenoh/lib`.
+ - You have a zenoh router (`zenohd`) installed, and the `zenoh_backend_rocksdb` library file is available in `~/.zenoh/lib`.
  - Declare the `ZBACKEND_ROCKSDB_ROOT` environment variable to the directory where you want the RocksDB databases
-   to be stored. If you don't declare it, the `~/.zenoh/zbackend_rocksdb` directory will be used.
+   to be stored. If you don't declare it, the `~/.zenoh/zenoh_backend_rocksdb` directory will be used.
 
 You can setup storages either at zenoh router startup via a configuration file, either at runtime via the zenoh admin space, using for instance the REST API.
 
@@ -54,7 +54,7 @@ You can setup storages either at zenoh router startup via a configuration file, 
         // configuration of "storages" plugin:
         storage_manager: {
           volumes: {
-            // configuration of a "rocksdb" volume (the "zbackend_rocksdb" backend library will be loaded at startup)
+            // configuration of a "rocksdb" volume (the "zenoh_backend_rocksdb" backend library will be loaded at startup)
             rocksdb: {}
           },
           storages: {
@@ -87,7 +87,7 @@ You can setup storages either at zenoh router startup via a configuration file, 
 
   - Run the zenoh router, with write permissions to its admin space:  
     `zenohd --adminspace-permissions rw`
-  - Add the "rocksdb" backend (the "zbackend_rocksdb" library will be loaded):  
+  - Add the "rocksdb" backend (the "zenoh_backend_rocksdb" library will be loaded):  
    `curl -X PUT -H 'content-type:application/json' -d '{}' http://localhost:8000/@/router/local/config/plugins/storage_manager/volumes/rocksdb`
   - Add the "demo" storage using the "rocksdb" backend:  
    `curl -X PUT -H 'content-type:application/json' -d '{key_expr:"demo/example/**",strip_prefix:"demo/example",volume: {id: "rocksdb",dir: "example",create_db: true}}' http://localhost:8000/@/router/local/config/plugins/storage_manager/storages/demo`
@@ -126,7 +126,7 @@ Storages relying on a RocksDB-backed volume must specify some additional configu
 ### Mapping to RocksDB database
 Each **storage** will map to a RocksDB database stored in directory: `${ZBACKEND_ROCKSDB_ROOT}/<dir>`, where:
   * `${ZBACKEND_ROCKSDB_ROOT}` is an environment variable that could be specified before zenoh router startup.
-     If this variable is not specified `${ZENOH_HOME}/zbackend_rocksdb` will be used
+     If this variable is not specified `${ZENOH_HOME}/zenoh_backend_rocksdb` will be used
      (where the default value of `${ZENOH_HOME}` is `~/.zenoh`).
   * `<dir>` is the `"dir"` property specified at storage creation.
 Each zenoh **key/value** put into the storage will map to 2 **key/values** in the database:

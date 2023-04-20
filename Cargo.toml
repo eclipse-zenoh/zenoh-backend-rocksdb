@@ -29,7 +29,7 @@ categories = ["network-programming", "database"]
 description = "Backend for Zenoh using RocksDB"
 
 [lib]
-name = "zbackend_rocksdb"
+name = "zenoh_backend_rocksdb"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

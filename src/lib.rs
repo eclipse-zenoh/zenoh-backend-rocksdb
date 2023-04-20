@@ -34,7 +34,7 @@ use zenoh_util::zenoh_home;
 pub const SCOPE_ENV_VAR: &str = "ZBACKEND_ROCKSDB_ROOT";
 
 /// The default root (whithin zenoh's home directory) if the ZBACKEND_ROCKSDB_ROOT environment variable is not specified.
-pub const DEFAULT_ROOT_DIR: &str = "zbackend_rocksdb";
+pub const DEFAULT_ROOT_DIR: &str = "zenoh_backend_rocksdb";
 
 // Properties used by the Backend
 //  - None
