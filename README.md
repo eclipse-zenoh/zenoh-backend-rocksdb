@@ -40,7 +40,7 @@ For previous versions see the README and code of the corresponding tagged versio
 
 Prerequisites:
  - You have a zenoh router (`zenohd`) installed, and the `zenoh_backend_rocksdb` library file is available in `~/.zenoh/lib`.
- - Declare the `ZBACKEND_ROCKSDB_ROOT` environment variable to the directory where you want the RocksDB databases
+ - Declare the `ZENOH_BACKEND_ROCKSDB_ROOT` environment variable to the directory where you want the RocksDB databases
    to be stored. If you don't declare it, the `~/.zenoh/zenoh_backend_rocksdb` directory will be used.
 
 You can setup storages either at zenoh router startup via a configuration file, either at runtime via the zenoh admin space, using for instance the REST API.
@@ -67,7 +67,7 @@ You can setup storages either at zenoh router startup via a configuration file, 
               strip_prefix: "demo/example",
               volume: {
                 id: "rocksdb",
-                // the RocksDB database will be stored in this directory (relative to ${ZBACKEND_ROCKSDB_ROOT})
+                // the RocksDB database will be stored in this directory (relative to ${ZENOH_BACKEND_ROCKSDB_ROOT})
                 dir: "example",
                 // create the RocksDB database if not already existing
                 create_db: true
@@ -109,7 +109,7 @@ curl http://localhost:8000/demo/example/**
 ## Volume-specific storage configuration
 Storages relying on a RocksDB-backed volume must specify some additional configuration as shown [above](#setup-via-a-json5-configuration-file):
 - **`"dir"`** (**required**, string) : The name of directory where the RocksDB database is stored.
-  The absolute path will be `${ZBACKEND_ROCKSDB_ROOT}/<dir>`.
+  The absolute path will be `${ZENOH_BACKEND_ROCKSDB_ROOT}/<dir>`.
 
 - **`"create_db"`** (optional, boolean) : create the RocksDB database if not already existing. Not set by default.
   *(the value doesn't matter, only the property existence is checked)*
@@ -124,8 +124,8 @@ Storages relying on a RocksDB-backed volume must specify some additional configu
 ## **Behaviour of the backend**
 
 ### Mapping to RocksDB database
-Each **storage** will map to a RocksDB database stored in directory: `${ZBACKEND_ROCKSDB_ROOT}/<dir>`, where:
-  * `${ZBACKEND_ROCKSDB_ROOT}` is an environment variable that could be specified before zenoh router startup.
+Each **storage** will map to a RocksDB database stored in directory: `${ZENOH_BACKEND_ROCKSDB_ROOT}/<dir>`, where:
+  * `${ZENOH_BACKEND_ROCKSDB_ROOT}` is an environment variable that could be specified before zenoh router startup.
      If this variable is not specified `${ZENOH_HOME}/zenoh_backend_rocksdb` will be used
      (where the default value of `${ZENOH_HOME}` is `~/.zenoh`).
   * `<dir>` is the `"dir"` property specified at storage creation.
