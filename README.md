@@ -28,14 +28,6 @@ Its library name (without OS specific prefix and extension) that zenoh will rely
 :point_right: **Build "master" branch:** see [below](#How-to-build-it)
 
 -------------------------------
-## :warning: Documentation for previous 0.5 versions:
-The following documentation related to the version currently in development in "master" branch: 0.6.x.
-
-For previous versions see the README and code of the corresponding tagged version:
- - [0.5.0-beta.9](https://github.com/eclipse-zenoh/zenoh-backend-rocksdb/tree/0.5.0-beta.9#readme)
- - [0.5.0-beta.8](https://github.com/eclipse-zenoh/zenoh-backend-rocksdb/tree/0.5.0-beta.8#readme)
-
--------------------------------
 ## **Examples of usage**
 
 Prerequisites:
@@ -104,7 +96,6 @@ curl -X PUT -d "B" http://localhost:8000/demo/example/a/b
 curl http://localhost:8000/demo/example/**
 ```
 
-
 -------------------------------
 ## Volume-specific storage configuration
 Storages relying on a RocksDB-backed volume must specify some additional configuration as shown [above](#setup-via-a-json5-configuration-file):
@@ -153,7 +144,6 @@ On GET operations:
     for the corresponding key are directly retrieved from the 2 Column Families using `get` RocksDB operation.
   * if the selector is a key expression: the storage searches for matching keys, leveraging RocksDB's [Prefix Seek](https://github.com/facebook/rocksdb/wiki/Prefix-Seek) if possible to minimize the number of entries to check.
 
-
 -------------------------------
 ## How to install it
 
@@ -174,11 +164,10 @@ Unzip it in the same directory than `zenohd` or to any directory where it can fi
 Add Eclipse Zenoh private repository to the sources list, and install the `zenoh-backend-rocksdb` package:
 
 ```bash
-echo "deb [trusted=yes] https://download.eclipse.org/zenoh/debian-repo/ /" | sudo tee -a /etc/apt/sources.list > /dev/null
+echo "deb [trusted=yes] https://download.eclipse.org/zenoh/debian-repo/ /" | sudo tee -a /etc/apt/sources.list.d/zenoh.list > /dev/null
 sudo apt update
 sudo apt install zenoh-backend-rocksdb
 ```
-
 
 -------------------------------
 ## How to build it
