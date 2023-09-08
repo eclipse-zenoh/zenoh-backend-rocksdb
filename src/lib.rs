@@ -16,6 +16,7 @@ use async_std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use log::{debug, error, trace, warn};
 use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch, DB};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 use uhlc::NTP64;
@@ -26,7 +27,7 @@ use zenoh::time::{new_reception_timestamp, Timestamp};
 use zenoh::Result as ZResult;
 use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
 use zenoh_backend_traits::*;
-use zenoh_codec::{RCodec, WCodec, Zenoh060};
+use zenoh_codec::{RCodec, WCodec, Zenoh080};
 use zenoh_core::{bail, zerror};
 use zenoh_util::zenoh_home;
 
@@ -85,8 +86,7 @@ pub fn create_volume(_unused: VolumeConfig) -> ZResult<Box<dyn Volume>> {
     properties.insert("root".into(), root.to_string_lossy().into());
     properties.insert("version".into(), LONG_VERSION.clone());
 
-    let admin_status = properties
-        .0
+    let admin_status = HashMap::from(properties)
         .into_iter()
         .map(|(k, v)| (k, serde_json::Value::String(v)))
         .collect();
@@ -437,7 +437,7 @@ fn get_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<Option<(Value, Timestam
 }
 
 fn encode_data_info(encoding: &Encoding, timestamp: &Timestamp, deleted: bool) -> ZResult<Vec<u8>> {
-    let codec = Zenoh060::default();
+    let codec = Zenoh080::new();
     let mut result = vec![];
     let mut writer = result.writer();
 
@@ -455,7 +455,7 @@ fn encode_data_info(encoding: &Encoding, timestamp: &Timestamp, deleted: bool) -
 }
 
 fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
-    let codec = Zenoh060::default();
+    let codec = Zenoh080::new();
     let mut reader = buf.reader();
     let timestamp: Timestamp = codec
         .read(&mut reader)
