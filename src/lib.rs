@@ -273,7 +273,7 @@ impl Storage for RocksdbStorage {
         debug!("getting key `{:?}` with parameters `{}`", key, _parameters);
         match get_kv(db, key.clone()) {
             Ok(Some((value, timestamp))) => Ok(vec![StoredData { value, timestamp }]),
-            Ok(None) => Err(format!("Entry not found for key `{:?}`", key.clone()).into()),
+            Ok(None) => Ok(vec![]),
             Err(e) => Err(format!("Error when getting key {:?} : {}", key, e).into()),
         }
     }
