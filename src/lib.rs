@@ -16,6 +16,7 @@ use async_std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use log::{debug, error, trace, warn};
 use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch, DB};
+use zenoh_plugin_trait::{Plugin, plugin_version};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -65,41 +66,48 @@ pub(crate) enum OnClosure {
     DoNothing,
 }
 
-#[allow(dead_code)]
-const CREATE_BACKEND_TYPECHECK: CreateVolume = create_volume;
+pub struct RocksDbBackend {}
+zenoh_plugin_trait::declare_plugin!(RocksDbBackend);
 
-#[no_mangle]
-pub fn create_volume(_unused: VolumeConfig) -> ZResult<Box<dyn Volume>> {
-    // For some reasons env_logger is sometime not active in a loaded library.
-    // Try to activate it here, ignoring failures.
-    let _ = env_logger::try_init();
-    debug!("RocksDB backend {}", LONG_VERSION.as_str());
+impl Plugin for RocksDbBackend {
+    type StartArgs = VolumeConfig;
+    type Instance = VolumeInstance;
 
-    let root = if let Some(dir) = std::env::var_os(SCOPE_ENV_VAR) {
-        PathBuf::from(dir)
-    } else {
-        let mut dir = PathBuf::from(zenoh_home());
-        dir.push(DEFAULT_ROOT_DIR);
-        dir
-    };
-    let mut properties = Properties::default();
-    properties.insert("root".into(), root.to_string_lossy().into());
-    properties.insert("version".into(), LONG_VERSION.clone());
+    const DEFAULT_NAME: &'static str = "rocks_backend";
+    const PLUGIN_VERSION: &'static str = plugin_version!();
 
-    let admin_status = HashMap::from(properties)
-        .into_iter()
-        .map(|(k, v)| (k, serde_json::Value::String(v)))
-        .collect();
-    Ok(Box::new(RocksdbBackend { admin_status, root }))
+    fn start(_name: &str, _config: &Self::StartArgs) -> ZResult<Self::Instance> {
+        // For some reasons env_logger is sometime not active in a loaded library.
+        // Try to activate it here, ignoring failures.
+        let _ = env_logger::try_init();
+        debug!("RocksDB backend {}", LONG_VERSION.as_str());
+
+        let root = if let Some(dir) = std::env::var_os(SCOPE_ENV_VAR) {
+            PathBuf::from(dir)
+        } else {
+            let mut dir = PathBuf::from(zenoh_home());
+            dir.push(DEFAULT_ROOT_DIR);
+            dir
+        };
+        let mut properties = Properties::default();
+        properties.insert("root".into(), root.to_string_lossy().into());
+        properties.insert("version".into(), Self::PLUGIN_VERSION.into());
+
+        let admin_status = HashMap::from(properties)
+            .into_iter()
+            .map(|(k, v)| (k, serde_json::Value::String(v)))
+            .collect();
+        Ok(Box::new(RocksdbVolume { admin_status, root }))
+    }
 }
 
-pub struct RocksdbBackend {
+pub struct RocksdbVolume {
     admin_status: serde_json::Value,
     root: PathBuf,
 }
 
 #[async_trait]
-impl Volume for RocksdbBackend {
+impl Volume for RocksdbVolume {
     fn get_admin_status(&self) -> serde_json::Value {
         self.admin_status.clone()
     }
@@ -112,7 +120,7 @@ impl Volume for RocksdbBackend {
         }
     }
 
-    async fn create_storage(&mut self, config: StorageConfig) -> ZResult<Box<dyn Storage>> {
+    async fn create_storage(&self, config: StorageConfig) -> ZResult<Box<dyn Storage>> {
         let volume_cfg = match config.volume_cfg.as_object() {
             Some(v) => v,
             None => bail!("rocksdb backed storages need volume-specific configurations"),
