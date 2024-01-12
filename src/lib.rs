@@ -16,7 +16,6 @@ use async_std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use log::{debug, error, trace, warn};
 use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch, DB};
-use zenoh_plugin_trait::{Plugin, plugin_version};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -30,6 +29,7 @@ use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
 use zenoh_backend_traits::*;
 use zenoh_codec::{RCodec, WCodec, Zenoh080};
 use zenoh_core::{bail, zerror};
+use zenoh_plugin_trait::{plugin_version, Plugin};
 use zenoh_util::zenoh_home;
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
