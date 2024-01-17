@@ -54,9 +54,7 @@ pub const NONE_KEY: &str = "@@none_key@@";
 const CF_PAYLOADS: &str = rocksdb::DEFAULT_COLUMN_FAMILY_NAME;
 const CF_DATA_INFO: &str = "data_info";
 
-const GIT_VERSION: &str = git_version::git_version!(prefix = "v", cargo_prefix = "v");
 lazy_static::lazy_static! {
-    static ref LONG_VERSION: String = format!("{} built with {}", GIT_VERSION, env!("RUSTC_VERSION"));
     static ref GC_PERIOD: Duration = Duration::new(5, 0);
     static ref MIN_DELAY_BEFORE_REMOVAL: NTP64 = NTP64::from(Duration::new(5, 0));
 }
@@ -81,7 +79,7 @@ impl Plugin for RocksDbBackend {
         // For some reasons env_logger is sometime not active in a loaded library.
         // Try to activate it here, ignoring failures.
         let _ = env_logger::try_init();
-        debug!("RocksDB backend {}", LONG_VERSION.as_str());
+        debug!("RocksDB backend {}", Self::PLUGIN_LONG_VERSION);
 
         let root = if let Some(dir) = std::env::var_os(SCOPE_ENV_VAR) {
             PathBuf::from(dir)
