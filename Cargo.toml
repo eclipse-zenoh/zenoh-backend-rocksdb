@@ -45,17 +45,17 @@ log = "0.4.17"
 rocksdb = "0.20.1"
 serde_json = "1.0.94"
 uhlc = "0.5.2"
-zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "simplified_load_plugin", features = [
+zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main", features = [
   "unstable",
 ] }
-zenoh-codec = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "simplified_load_plugin" }
-zenoh-collections = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "simplified_load_plugin" }
-zenoh-core = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "simplified_load_plugin" }
-zenoh-protocol = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "simplified_load_plugin" }
-zenoh-util = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "simplified_load_plugin" }
-zenoh-keyexpr = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "simplified_load_plugin" }
-zenoh_backend_traits = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "simplified_load_plugin" }
-zenoh-plugin-trait = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "simplified_load_plugin" }
+zenoh-codec = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
+zenoh-collections = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
+zenoh-core = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
+zenoh-protocol = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
+zenoh-util = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
+zenoh-keyexpr = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
+zenoh_backend_traits = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
+zenoh-plugin-trait = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
 
 [build-dependencies]
 rustc_version = "0.4.0"
