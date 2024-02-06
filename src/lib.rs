@@ -29,6 +29,7 @@ use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
 use zenoh_backend_traits::*;
 use zenoh_codec::{RCodec, WCodec, Zenoh080};
 use zenoh_core::{bail, zerror};
+use zenoh_plugin_trait::{plugin_long_version, plugin_version, Plugin};
 use zenoh_util::zenoh_home;
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
@@ -53,9 +54,7 @@ pub const NONE_KEY: &str = "@@none_key@@";
 const CF_PAYLOADS: &str = rocksdb::DEFAULT_COLUMN_FAMILY_NAME;
 const CF_DATA_INFO: &str = "data_info";
 
-const GIT_VERSION: &str = git_version::git_version!(prefix = "v", cargo_prefix = "v");
 lazy_static::lazy_static! {
-    static ref LONG_VERSION: String = format!("{} built with {}", GIT_VERSION, env!("RUSTC_VERSION"));
     static ref GC_PERIOD: Duration = Duration::new(5, 0);
     static ref MIN_DELAY_BEFORE_REMOVAL: NTP64 = NTP64::from(Duration::new(5, 0));
 }
@@ -65,41 +64,49 @@ pub(crate) enum OnClosure {
     DoNothing,
 }
 
-#[allow(dead_code)]
-const CREATE_BACKEND_TYPECHECK: CreateVolume = create_volume;
+pub struct RocksDbBackend {}
+zenoh_plugin_trait::declare_plugin!(RocksDbBackend);
 
-#[no_mangle]
-pub fn create_volume(_unused: VolumeConfig) -> ZResult<Box<dyn Volume>> {
-    // For some reasons env_logger is sometime not active in a loaded library.
-    // Try to activate it here, ignoring failures.
-    let _ = env_logger::try_init();
-    debug!("RocksDB backend {}", LONG_VERSION.as_str());
+impl Plugin for RocksDbBackend {
+    type StartArgs = VolumeConfig;
+    type Instance = VolumeInstance;
 
-    let root = if let Some(dir) = std::env::var_os(SCOPE_ENV_VAR) {
-        PathBuf::from(dir)
-    } else {
-        let mut dir = PathBuf::from(zenoh_home());
-        dir.push(DEFAULT_ROOT_DIR);
-        dir
-    };
-    let mut properties = Properties::default();
-    properties.insert("root".into(), root.to_string_lossy().into());
-    properties.insert("version".into(), LONG_VERSION.clone());
+    const DEFAULT_NAME: &'static str = "rocks_backend";
+    const PLUGIN_VERSION: &'static str = plugin_version!();
+    const PLUGIN_LONG_VERSION: &'static str = plugin_long_version!();
 
-    let admin_status = HashMap::from(properties)
-        .into_iter()
-        .map(|(k, v)| (k, serde_json::Value::String(v)))
-        .collect();
-    Ok(Box::new(RocksdbBackend { admin_status, root }))
+    fn start(_name: &str, _config: &Self::StartArgs) -> ZResult<Self::Instance> {
+        // For some reasons env_logger is sometime not active in a loaded library.
+        // Try to activate it here, ignoring failures.
+        let _ = env_logger::try_init();
+        debug!("RocksDB backend {}", Self::PLUGIN_LONG_VERSION);
+
+        let root = if let Some(dir) = std::env::var_os(SCOPE_ENV_VAR) {
+            PathBuf::from(dir)
+        } else {
+            let mut dir = PathBuf::from(zenoh_home());
+            dir.push(DEFAULT_ROOT_DIR);
+            dir
+        };
+        let mut properties = Properties::default();
+        properties.insert("root".into(), root.to_string_lossy().into());
+        properties.insert("version".into(), Self::PLUGIN_VERSION.into());
+
+        let admin_status = HashMap::from(properties)
+            .into_iter()
+            .map(|(k, v)| (k, serde_json::Value::String(v)))
+            .collect();
+        Ok(Box::new(RocksdbVolume { admin_status, root }))
+    }
 }
 
-pub struct RocksdbBackend {
+pub struct RocksdbVolume {
     admin_status: serde_json::Value,
     root: PathBuf,
 }
 
 #[async_trait]
-impl Volume for RocksdbBackend {
+impl Volume for RocksdbVolume {
     fn get_admin_status(&self) -> serde_json::Value {
         self.admin_status.clone()
     }
@@ -112,7 +119,7 @@ impl Volume for RocksdbBackend {
         }
     }
 
-    async fn create_storage(&mut self, config: StorageConfig) -> ZResult<Box<dyn Storage>> {
+    async fn create_storage(&self, config: StorageConfig) -> ZResult<Box<dyn Storage>> {
         let volume_cfg = match config.volume_cfg.as_object() {
             Some(v) => v,
             None => bail!("rocksdb backed storages need volume-specific configurations"),
