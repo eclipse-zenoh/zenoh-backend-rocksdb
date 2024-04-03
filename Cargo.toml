@@ -38,24 +38,23 @@ stats = ["zenoh/stats"]
 [dependencies]
 async-std = "=1.12.0"
 async-trait = "0.1.66"
-env_logger = "0.10.0"
 git-version = "0.3.5"
 lazy_static = "1.4.0"
-log = "0.4.17"
 rocksdb = "0.20.1"
 serde_json = "1.0.94"
+tracing = "0.1"
 uhlc = "0.5.2"
-zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main", features = [
+zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "feat/tracing", features = [
   "unstable",
 ] }
-zenoh-codec = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-collections = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-core = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-protocol = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-util = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-keyexpr = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh_backend_traits = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-plugin-trait = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
+zenoh-codec = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "feat/tracing" }
+zenoh-collections = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "feat/tracing" }
+zenoh-core = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "feat/tracing" }
+zenoh-protocol = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "feat/tracing" }
+zenoh-util = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "feat/tracing" }
+zenoh-keyexpr = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "feat/tracing" }
+zenoh_backend_traits = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "feat/tracing" }
+zenoh-plugin-trait = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "feat/tracing" }
 
 [build-dependencies]
 rustc_version = "0.4.0"
