@@ -1,39 +1,29 @@
-#
-# Copyright (c) 2022 ZettaScale Technology
-#
-# This program and the accompanying materials are made available under the
-# terms of the Eclipse Public License 2.0 which is available at
-# http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
-# which is available at https://www.apache.org/licenses/LICENSE-2.0.
-#
-# SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
-#
-# Contributors:
-#   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
-#
 [package]
 name = "zenoh-backend-rocksdb"
-version = "0.11.0-dev"
+version = "0.11.0-dev-63-g392a47d"
 repository = "https://github.com/eclipse-zenoh/zenoh-backend-rocksdb"
 homepage = "http://zenoh.io"
-authors = [
-  "kydos <angelo@icorsaro.net>",
-  "Julien Enoch <julien@enoch.fr>",
-  "Olivier Hécart <olivier.hecart@zettascale.tech>",
-  "Luca Cominardi <luca.cominardi@zettascale.tech>",
-  "Sreeja Nair <sreeja.nair@zettascale.tech>",
-]
+authors = [ "kydos <angelo@icorsaro.net>", "Julien Enoch <julien@enoch.fr>", "Olivier Hécart <olivier.hecart@zettascale.tech>", "Luca Cominardi <luca.cominardi@zettascale.tech>", "Sreeja Nair <sreeja.nair@zettascale.tech>" ]
 edition = "2021"
 license = "EPL-2.0 OR Apache-2.0"
-categories = ["network-programming", "database"]
+categories = [ "network-programming", "database" ]
 description = "Backend for Zenoh using RocksDB"
+
+[package.metadata]
+[package.metadata.deb]
+name = "zenoh-backend-rocksdb"
+maintainer = "zenoh-dev@eclipse.org"
+copyright = "2022 ZettaScale Technology"
+section = "net"
+license-file = [ "LICENSE", "0" ]
+depends = "zenoh-plugin-storage-manager (=0.11.0-dev-1)"
 
 [lib]
 name = "zenoh_backend_rocksdb"
-crate-type = ["cdylib", "rlib"]
+crate-type = [ "cdylib", "rlib" ]
 
 [features]
-stats = ["zenoh/stats"]
+stats = [ "zenoh/stats" ]
 
 [dependencies]
 async-std = "=1.12.0"
@@ -45,25 +35,43 @@ log = "0.4.17"
 rocksdb = "0.20.1"
 serde_json = "1.0.94"
 uhlc = "0.5.2"
-zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main", features = [
-  "unstable",
-] }
-zenoh-codec = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-collections = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-core = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-protocol = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-util = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-keyexpr = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh_backend_traits = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-plugin-trait = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
+
+[dependencies.zenoh]
+git = "https://github.com/eclipse-zenoh/zenoh"
+branch = "main"
+features = [ "unstable" ]
+
+[dependencies.zenoh-codec]
+git = "https://github.com/eclipse-zenoh/zenoh"
+branch = "main"
+
+[dependencies.zenoh-collections]
+git = "https://github.com/eclipse-zenoh/zenoh"
+branch = "main"
+
+[dependencies.zenoh-core]
+git = "https://github.com/eclipse-zenoh/zenoh"
+branch = "main"
+
+[dependencies.zenoh-protocol]
+git = "https://github.com/eclipse-zenoh/zenoh"
+branch = "main"
+
+[dependencies.zenoh-util]
+git = "https://github.com/eclipse-zenoh/zenoh"
+branch = "main"
+
+[dependencies.zenoh-keyexpr]
+git = "https://github.com/eclipse-zenoh/zenoh"
+branch = "main"
+
+[dependencies.zenoh_backend_traits]
+git = "https://github.com/eclipse-zenoh/zenoh"
+branch = "main"
+
+[dependencies.zenoh-plugin-trait]
+git = "https://github.com/eclipse-zenoh/zenoh"
+branch = "main"
 
 [build-dependencies]
 rustc_version = "0.4.0"
-
-[package.metadata.deb]
-name = "zenoh-backend-rocksdb"
-maintainer = "zenoh-dev@eclipse.org"
-copyright = "2022 ZettaScale Technology"
-section = "net"
-license-file = ["LICENSE", "0"]
-depends = "zenoh-plugin-storage-manager (=0.11.0-dev-1)"
