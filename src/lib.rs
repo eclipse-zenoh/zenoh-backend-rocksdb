@@ -76,7 +76,7 @@ impl Plugin for RocksDbBackend {
     const PLUGIN_LONG_VERSION: &'static str = plugin_long_version!();
 
     fn start(_name: &str, _config: &Self::StartArgs) -> ZResult<Self::Instance> {
-        zenoh_util::init_log_from_env();
+        zenoh_util::try_init_log_from_env();
         debug!("RocksDB backend {}", Self::PLUGIN_LONG_VERSION);
 
         let root = if let Some(dir) = std::env::var_os(SCOPE_ENV_VAR) {
