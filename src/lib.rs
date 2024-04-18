@@ -14,11 +14,11 @@
 
 use async_std::sync::{Arc, Mutex};
 use async_trait::async_trait;
-use log::{debug, error, trace, warn};
 use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch, DB};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
+use tracing::{debug, error, trace, warn};
 use uhlc::NTP64;
 use zenoh::buffers::{reader::HasReader, writer::HasWriter};
 use zenoh::prelude::*;
@@ -76,9 +76,7 @@ impl Plugin for RocksDbBackend {
     const PLUGIN_LONG_VERSION: &'static str = plugin_long_version!();
 
     fn start(_name: &str, _config: &Self::StartArgs) -> ZResult<Self::Instance> {
-        // For some reasons env_logger is sometime not active in a loaded library.
-        // Try to activate it here, ignoring failures.
-        let _ = env_logger::try_init();
+        zenoh_util::try_init_log_from_env();
         debug!("RocksDB backend {}", Self::PLUGIN_LONG_VERSION);
 
         let root = if let Some(dir) = std::env::var_os(SCOPE_ENV_VAR) {
