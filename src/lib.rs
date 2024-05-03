@@ -65,6 +65,8 @@ pub(crate) enum OnClosure {
 }
 
 pub struct RocksDbBackend {}
+
+#[cfg(feature = "dynamic_plugin")]
 zenoh_plugin_trait::declare_plugin!(RocksDbBackend);
 
 impl Plugin for RocksDbBackend {
