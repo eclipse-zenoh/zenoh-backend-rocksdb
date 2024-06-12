@@ -43,20 +43,21 @@ async-trait = "0.1.66"
 git-version = "0.3.5"
 lazy_static = "1.4.0"
 rocksdb = "0.20.1"
-serde_json = "1.0.94"
+serde_json = "1.0.114"
 tracing = "0.1"
-uhlc = "0.5.2"
-zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main", features = [
+uhlc = "0.7.0"
+zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0", features = [
   "unstable",
 ] }
-zenoh-codec = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-collections = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-core = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-protocol = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-util = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-keyexpr = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh_backend_traits = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
-zenoh-plugin-trait = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "main" }
+zenoh-buffers = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
+zenoh-codec = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
+zenoh-collections = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
+zenoh-core = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
+zenoh-protocol = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
+zenoh-util = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
+zenoh-keyexpr = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
+zenoh_backend_traits = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
+zenoh-plugin-trait = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
 
 [build-dependencies]
 rustc_version = "0.4.0"
