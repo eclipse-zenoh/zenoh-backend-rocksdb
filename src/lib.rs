@@ -21,8 +21,8 @@ use std::time::Duration;
 use tracing::{debug, error, trace, warn};
 use uhlc::NTP64;
 use zenoh::encoding::Encoding;
+use zenoh::internal::Value;
 use zenoh::time::{new_timestamp, Timestamp};
-use zenoh::value::Value;
 use zenoh::Result as ZResult;
 use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
 use zenoh_backend_traits::*;
@@ -33,7 +33,7 @@ use zenoh_codec::{RCodec, WCodec, Zenoh080};
 use zenoh_core::{bail, zerror};
 use zenoh_keyexpr::OwnedKeyExpr;
 use zenoh_plugin_trait::{plugin_long_version, plugin_version, Plugin};
-use zenoh_protocol::core::Properties;
+use zenoh_protocol::core::Parameters;
 use zenoh_util::zenoh_home;
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
@@ -92,7 +92,7 @@ impl Plugin for RocksDbBackend {
             dir.push(DEFAULT_ROOT_DIR);
             dir
         };
-        let mut properties = Properties::default();
+        let mut properties = Parameters::default();
         properties.insert::<String, String>("root".into(), root.to_string_lossy().into());
         properties.insert::<String, String>("version".into(), Self::PLUGIN_VERSION.into());
 
