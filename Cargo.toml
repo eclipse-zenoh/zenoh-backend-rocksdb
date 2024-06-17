@@ -49,6 +49,7 @@ uhlc = "0.7.0"
 zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0", features = [
   "unstable",
   "internal",
+  "plugins"
 ] }
 zenoh_backend_traits = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
 zenoh-plugin-trait = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }

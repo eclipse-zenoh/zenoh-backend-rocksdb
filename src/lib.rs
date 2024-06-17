@@ -15,6 +15,7 @@
 use async_std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch, DB};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -394,7 +395,7 @@ fn put_kv(
             "Option for ColumFamily {CF_PAYLOADS} was None, cancel put_kv"
         ))?,
         &key,
-        value.payload().into::<Vec<u8>>(),
+        value.payload().into::<Cow<[u8]>>(),
     );
     batch.put_cf(
         db.cf_handle(CF_DATA_INFO).ok_or(zerror!(
@@ -451,8 +452,8 @@ fn get_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<Option<(Value, Timestam
         (None, None) => {
             bail!("Option for ColumFamily {CF_PAYLOADS} and {CF_DATA_INFO} were both 'None'")
         }
-        (None, Some(_)) => bail!("Option for ColumFamily and {CF_DATA_INFO} were both 'None'"),
-        (Some(_), None) => bail!("Option for ColumFamily and {CF_PAYLOADS} were both 'None'"),
+        (None, Some(_)) => bail!("Option for ColumFamily {CF_DATA_INFO} is 'None'"),
+        (Some(_), None) => bail!("Option for ColumFamily {CF_PAYLOADS} is 'None'"),
         (Some(cf_payloads), Some(cf_data_info)) => (cf_payloads, cf_data_info),
     };
 
@@ -471,6 +472,7 @@ fn get_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<Option<(Value, Timestam
             trace!("second ok");
             // Only the payload is present in DB!
             // Possibly legacy data. Consider as encoding as APP_OCTET_STREAM and create timestamp from now()
+
             match std::num::NonZeroU128::new(1u128)
                 .map(new_timestamp)
                 .map(|timestamp| {
