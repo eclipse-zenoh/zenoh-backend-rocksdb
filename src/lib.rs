@@ -21,20 +21,20 @@ use std::time::Duration;
 use tracing::{debug, error, trace, warn};
 use uhlc::NTP64;
 use zenoh::encoding::Encoding;
-use zenoh::internal::Value;
+use zenoh::internal::{
+    bail,
+    buffers::{HasReader, HasWriter},
+    zenoh_home, zerror, Value,
+};
+use zenoh::key_expr::OwnedKeyExpr;
+use zenoh::selector::Parameters;
 use zenoh::time::{new_timestamp, Timestamp};
-use zenoh::Result as ZResult;
+use zenoh::{try_init_log_from_env, Error, Result as ZResult};
 use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
 use zenoh_backend_traits::*;
-use zenoh_buffers::buffer::SplitBuffer;
-use zenoh_buffers::ZBuf;
-use zenoh_buffers::{reader::HasReader, writer::HasWriter};
-use zenoh_codec::{RCodec, WCodec, Zenoh080};
-use zenoh_core::{bail, zerror};
-use zenoh_keyexpr::OwnedKeyExpr;
+use zenoh_codec::Zenoh080;
+use zenoh_codec::{RCodec, WCodec};
 use zenoh_plugin_trait::{plugin_long_version, plugin_version, Plugin};
-use zenoh_protocol::core::Parameters;
-use zenoh_util::zenoh_home;
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
 pub const SCOPE_ENV_VAR: &str = "ZENOH_BACKEND_ROCKSDB_ROOT";
@@ -82,7 +82,7 @@ impl Plugin for RocksDbBackend {
     const PLUGIN_LONG_VERSION: &'static str = plugin_long_version!();
 
     fn start(_name: &str, _config: &Self::StartArgs) -> ZResult<Self::Instance> {
-        zenoh_util::try_init_log_from_env();
+        try_init_log_from_env();
         debug!("RocksDB backend {}", Self::PLUGIN_LONG_VERSION);
 
         let root = if let Some(dir) = std::env::var_os(SCOPE_ENV_VAR) {
@@ -394,7 +394,7 @@ fn put_kv(
             "Option for ColumFamily {CF_PAYLOADS} was None, cancel put_kv"
         ))?,
         &key,
-        ZBuf::from(value.payload()).contiguous(),
+        value.payload().into::<Vec<u8>>(),
     );
     batch.put_cf(
         db.cf_handle(CF_DATA_INFO).ok_or(zerror!(
@@ -495,6 +495,7 @@ fn get_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<Option<(Value, Timestam
 fn encode_data_info(encoding: Encoding, timestamp: &Timestamp, deleted: bool) -> ZResult<Vec<u8>> {
     let codec = Zenoh080::new();
     let mut result = vec![];
+
     let mut writer = result.writer();
 
     // note: encode timestamp at first for faster decoding when only this one is required
@@ -504,10 +505,10 @@ fn encode_data_info(encoding: Encoding, timestamp: &Timestamp, deleted: bool) ->
     codec
         .write(&mut writer, deleted as u8)
         .map_err(|_| zerror!("Failed to encode data-info (deleted)"))?;
-
     codec
-        .write(&mut writer, &zenoh_protocol::core::Encoding::from(encoding))
+        .write(&mut writer, encoding)
         .map_err(|_| zerror!("Failed to encode data-info (encoding)"))?;
+
     Ok(result)
 }
 
@@ -524,15 +525,15 @@ fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
         .read(&mut reader)
         .map_err(|_| zerror!("Failed to decode data-info (deleted)"))?;
 
-    let encoding: zenoh_protocol::core::Encoding = codec
+    let encoding: Encoding = codec
         .read(&mut reader)
         .map_err(|_| zerror!("Failed to decode data-info (timestamp)"))?;
 
     let deleted = deleted != 0;
 
-    Ok((encoding.into(), timestamp, deleted))
+    Ok((encoding, timestamp, deleted))
 }
 
-fn rocksdb_err_to_zerr(err: rocksdb::Error) -> zenoh_core::Error {
+fn rocksdb_err_to_zerr(err: rocksdb::Error) -> Error {
     zerror!("Rocksdb error: {}", err.into_string()).into()
 }

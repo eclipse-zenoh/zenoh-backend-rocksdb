@@ -48,17 +48,11 @@ tracing = "0.1"
 uhlc = "0.7.0"
 zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0", features = [
   "unstable",
-  "internal"
+  "internal",
 ] }
-zenoh-buffers = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
-zenoh-codec = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
-zenoh-collections = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
-zenoh-core = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
-zenoh-protocol = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
-zenoh-util = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
-zenoh-keyexpr = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
 zenoh_backend_traits = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
 zenoh-plugin-trait = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
+zenoh-codec = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
 
 [build-dependencies]
 rustc_version = "0.4.0"
