@@ -506,7 +506,7 @@ fn encode_data_info(encoding: Encoding, timestamp: &Timestamp, deleted: bool) ->
         .write(&mut writer, deleted as u8)
         .map_err(|_| zerror!("Failed to encode data-info (deleted)"))?;
     codec
-        .write(&mut writer, encoding)
+        .write(&mut writer, encoding.to_string().as_bytes())
         .map_err(|_| zerror!("Failed to encode data-info (encoding)"))?;
 
     Ok(result)
@@ -525,13 +525,13 @@ fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
         .read(&mut reader)
         .map_err(|_| zerror!("Failed to decode data-info (deleted)"))?;
 
-    let encoding: Encoding = codec
+    let encoding_string: String = codec
         .read(&mut reader)
         .map_err(|_| zerror!("Failed to decode data-info (timestamp)"))?;
 
     let deleted = deleted != 0;
 
-    Ok((encoding, timestamp, deleted))
+    Ok((Encoding::from(encoding_string), timestamp, deleted))
 }
 
 fn rocksdb_err_to_zerr(err: rocksdb::Error) -> Error {
