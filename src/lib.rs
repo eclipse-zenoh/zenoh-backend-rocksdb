@@ -17,10 +17,12 @@ use async_trait::async_trait;
 use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch, DB};
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{debug, error, trace, warn};
 use uhlc::NTP64;
+use zenoh::bytes::{Deserialize, Serialize, ZBytes, ZSerde};
 use zenoh::encoding::Encoding;
 use zenoh::internal::{
     bail,
@@ -496,6 +498,7 @@ fn get_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<Option<(Value, Timestam
 
 fn encode_data_info(encoding: Encoding, timestamp: &Timestamp, deleted: bool) -> ZResult<Vec<u8>> {
     let codec = Zenoh080::new();
+
     let mut result = vec![];
 
     let mut writer = result.writer();
@@ -507,8 +510,13 @@ fn encode_data_info(encoding: Encoding, timestamp: &Timestamp, deleted: bool) ->
     codec
         .write(&mut writer, deleted as u8)
         .map_err(|_| zerror!("Failed to encode data-info (deleted)"))?;
-    codec
-        .write(&mut writer, encoding.to_string().as_bytes())
+
+    // The implementation for Serialize for ZSerde creates a Zenoh080::new()
+    let mut encoding_bytes: ZBytes = ZSerde.serialize(&encoding);
+
+    let _ = encoding_bytes
+        .writer()
+        .write(writer)
         .map_err(|_| zerror!("Failed to encode data-info (encoding)"))?;
 
     Ok(result)
@@ -527,13 +535,16 @@ fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
         .read(&mut reader)
         .map_err(|_| zerror!("Failed to decode data-info (deleted)"))?;
 
-    let encoding_string: String = codec
-        .read(&mut reader)
-        .map_err(|_| zerror!("Failed to decode data-info (timestamp)"))?;
+    let z_bytes =
+        ZBytes::from_reader(reader).map_err(|_| zerror!("Failed to decode data-info (deleted)"))?;
+
+    let encoding: Encoding = ZSerde
+        .deserialize(&z_bytes)
+        .map_err(|_| zerror!("Failed to decode data-info (Encoding)"))?;
 
     let deleted = deleted != 0;
 
-    Ok((Encoding::from(encoding_string), timestamp, deleted))
+    Ok((encoding, timestamp, deleted))
 }
 
 fn rocksdb_err_to_zerr(err: rocksdb::Error) -> Error {
