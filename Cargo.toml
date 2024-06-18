@@ -46,21 +46,14 @@ rocksdb = "0.22.0"
 serde_json = "1.0.114"
 tracing = "0.1"
 uhlc = "0.7.0"
-zenoh = { path = "/Users/luca/Repository/eclipse-zenoh/zenoh", features = [
-  "unstable",
-  "internal",
-  "plugins"
+zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0", features = [
+ "unstable",
+ "internal",
+ "plugins"
 ] }
-zenoh_backend_traits = { path = "/Users/luca/Repository/eclipse-zenoh/plugins/zenoh-backend-traits" }
-zenoh-plugin-trait = { path = "/Users/luca/Repository/eclipse-zenoh/plugins/zenoh-plugin-trait" }
-# zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0", features = [
-#  "unstable",
-#  "internal",
-#  "plugins"
-# ] }
-# zenoh_backend_traits = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
-# zenoh-plugin-trait = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
-# zenoh-codec = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
+zenoh_backend_traits = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
+zenoh-plugin-trait = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
+zenoh-codec = { git = "https://github.com/eclipse-zenoh/zenoh", branch = "dev/1.0.0" }
 
 [build-dependencies]
 rustc_version = "0.4.0"
