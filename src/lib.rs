@@ -17,26 +17,19 @@ use async_trait::async_trait;
 use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch, DB};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{debug, error, trace, warn};
 use uhlc::NTP64;
-use zenoh::bytes::{Deserialize, Serialize, ZBytes, ZSerde};
+use zenoh::bytes::ZBytes;
 use zenoh::encoding::Encoding;
-use zenoh::internal::{
-    bail,
-    buffers::{HasReader, HasWriter},
-    zenoh_home, zerror, Value,
-};
+use zenoh::internal::{bail, zenoh_home, zerror, Value};
 use zenoh::key_expr::OwnedKeyExpr;
 use zenoh::selector::Parameters;
 use zenoh::time::{new_timestamp, Timestamp};
 use zenoh::{try_init_log_from_env, Error, Result as ZResult};
 use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
 use zenoh_backend_traits::*;
-use zenoh_codec::Zenoh080;
-use zenoh_codec::{RCodec, WCodec};
 use zenoh_plugin_trait::{plugin_long_version, plugin_version, Plugin};
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
@@ -497,49 +490,36 @@ fn get_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<Option<(Value, Timestam
 }
 
 fn encode_data_info(encoding: Encoding, timestamp: &Timestamp, deleted: bool) -> ZResult<Vec<u8>> {
-    let codec = Zenoh080::new();
+    let mut bytes = ZBytes::empty();
+    let mut writer = bytes.writer();
 
-    let mut result = vec![];
-
-    let mut writer = result.writer();
-
-    // note: encode timestamp at first for faster decoding when only this one is required
-    codec
-        .write(&mut writer, timestamp)
+    writer
+        .serialize(timestamp)
         .map_err(|_| zerror!("Failed to encode data-info (timestamp)"))?;
-    codec
-        .write(&mut writer, deleted as u8)
+    writer
+        .serialize(deleted as u8)
         .map_err(|_| zerror!("Failed to encode data-info (deleted)"))?;
-
-    // The implementation for Serialize for ZSerde creates a Zenoh080::new()
-    let mut encoding_bytes: ZBytes = ZSerde.serialize(&encoding);
-
-    let _ = encoding_bytes
-        .writer()
-        .write(writer)
+    writer
+        .serialize(&encoding)
         .map_err(|_| zerror!("Failed to encode data-info (encoding)"))?;
 
-    Ok(result)
+    Ok(bytes.into())
 }
 
 fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
-    let codec = Zenoh080::new();
+    let bytes = ZBytes::from(buf);
+    let mut reader = bytes.reader();
 
-    let mut reader = buf.reader();
-
-    let timestamp: Timestamp = codec
-        .read(&mut reader)
+    let timestamp: Timestamp = reader
+        .deserialize()
         .map_err(|_| zerror!("Failed to decode data-info (timestamp)"))?;
 
-    let deleted: u8 = codec
-        .read(&mut reader)
+    let deleted: u8 = reader
+        .deserialize()
         .map_err(|_| zerror!("Failed to decode data-info (deleted)"))?;
 
-    let z_bytes =
-        ZBytes::from_reader(reader).map_err(|_| zerror!("Failed to decode data-info (deleted)"))?;
-
-    let encoding: Encoding = ZSerde
-        .deserialize(&z_bytes)
+    let encoding: Encoding = reader
+        .deserialize()
         .map_err(|_| zerror!("Failed to decode data-info (Encoding)"))?;
 
     let deleted = deleted != 0;
