@@ -15,22 +15,22 @@
 use async_std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch, DB};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{debug, error, trace, warn};
 use uhlc::NTP64;
-use zenoh::buffers::{reader::HasReader, writer::HasWriter};
-use zenoh::prelude::*;
-use zenoh::properties::Properties;
-use zenoh::time::{new_reception_timestamp, Timestamp};
-use zenoh::Result as ZResult;
+use zenoh::bytes::ZBytes;
+use zenoh::encoding::Encoding;
+use zenoh::internal::{bail, zenoh_home, zerror, Value};
+use zenoh::key_expr::OwnedKeyExpr;
+use zenoh::selector::Parameters;
+use zenoh::time::{new_timestamp, Timestamp};
+use zenoh::{try_init_log_from_env, Error, Result as ZResult};
 use zenoh_backend_traits::config::{StorageConfig, VolumeConfig};
 use zenoh_backend_traits::*;
-use zenoh_codec::{RCodec, WCodec, Zenoh080};
-use zenoh_core::{bail, zerror};
 use zenoh_plugin_trait::{plugin_long_version, plugin_version, Plugin};
-use zenoh_util::zenoh_home;
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
 pub const SCOPE_ENV_VAR: &str = "ZENOH_BACKEND_ROCKSDB_ROOT";
@@ -78,7 +78,7 @@ impl Plugin for RocksDbBackend {
     const PLUGIN_LONG_VERSION: &'static str = plugin_long_version!();
 
     fn start(_name: &str, _config: &Self::StartArgs) -> ZResult<Self::Instance> {
-        zenoh_util::try_init_log_from_env();
+        try_init_log_from_env();
         debug!("RocksDB backend {}", Self::PLUGIN_LONG_VERSION);
 
         let root = if let Some(dir) = std::env::var_os(SCOPE_ENV_VAR) {
@@ -88,9 +88,9 @@ impl Plugin for RocksDbBackend {
             dir.push(DEFAULT_ROOT_DIR);
             dir
         };
-        let mut properties = Properties::default();
-        properties.insert("root".into(), root.to_string_lossy().into());
-        properties.insert("version".into(), Self::PLUGIN_VERSION.into());
+        let mut properties = Parameters::default();
+        properties.insert::<String, String>("root".into(), root.to_string_lossy().into());
+        properties.insert::<String, String>("version".into(), Self::PLUGIN_VERSION.into());
 
         let admin_status = HashMap::from(properties)
             .into_iter()
@@ -197,14 +197,6 @@ impl Volume for RocksdbVolume {
             db,
         }))
     }
-
-    fn incoming_data_interceptor(&self) -> Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>> {
-        None
-    }
-
-    fn outgoing_data_interceptor(&self) -> Option<Arc<dyn Fn(Sample) -> Sample + Send + Sync>> {
-        None
-    }
 }
 
 struct RocksdbStorage {
@@ -230,7 +222,10 @@ impl Storage for RocksdbStorage {
     ) -> ZResult<StorageInsertionResult> {
         // Get lock on DB
         let db_cell = self.db.lock().await;
-        let db = db_cell.as_ref().unwrap();
+
+        let db = db_cell
+            .as_ref()
+            .ok_or(zerror!("Could not get DB ref in put"))?;
 
         // Store the sample
         debug!(
@@ -254,7 +249,9 @@ impl Storage for RocksdbStorage {
     ) -> ZResult<StorageInsertionResult> {
         // Get lock on DB
         let db_cell = self.db.lock().await;
-        let db = db_cell.as_ref().unwrap();
+        let db = db_cell
+            .as_ref()
+            .ok_or(zerror!("Could not get DB ref in delete"))?;
 
         debug!("Deleting key: {:?}", key);
         if !self.read_only {
@@ -274,7 +271,9 @@ impl Storage for RocksdbStorage {
     ) -> ZResult<Vec<StoredData>> {
         // Get lock on DB
         let db_cell = self.db.lock().await;
-        let db = db_cell.as_ref().unwrap();
+        let db = db_cell
+            .as_ref()
+            .ok_or(zerror!("Could not get DB ref in get"))?;
 
         // Get the matching key/value
         debug!("getting key `{:?}` with parameters `{}`", key, _parameters);
@@ -289,10 +288,16 @@ impl Storage for RocksdbStorage {
         let mut result = Vec::new();
 
         let db_cell = self.db.lock().await;
-        let db = db_cell.as_ref().unwrap();
+        let db = db_cell
+            .as_ref()
+            .ok_or(zerror!("Could not get DB ref in get_all_entries"))?;
+
+        let cf_handle = db.cf_handle(CF_DATA_INFO).ok_or(zerror!(
+            "Option for ColumFamily {CF_DATA_INFO} was None, cancel get_all_entries"
+        ))?;
 
         // Iterate over DATA_INFO Column Family to avoid loading payloads
-        for item in db.prefix_iterator_cf(db.cf_handle(CF_DATA_INFO).unwrap(), "") {
+        for item in db.prefix_iterator_cf(cf_handle, "") {
             let (key, buf) = item.map_err(|e| zerror!("{}", e))?;
             let key_str = String::from_utf8_lossy(&key);
             let res_ke = if key_str == NONE_KEY {
@@ -323,40 +328,43 @@ impl Drop for RocksdbStorage {
             // Get lock on DB and take DB so we can drop it before destroying it
             // (avoiding RocksDB lock to be taken twice)
             let mut db_cell = self.db.lock().await;
-            let db = db_cell.take().unwrap();
 
-            // Flush all
-            if let Err(err) = db.flush() {
-                warn!("Closing Rocksdb storage, flush failed: {}", err);
-            }
+            if let Some(db) = db_cell.take() {
+                // Flush all
+                if let Err(err) = db.flush() {
+                    warn!("Closing Rocksdb storage, flush failed: {}", err);
+                }
 
-            // copy path for later use after DB is dropped
-            let path = db.path().to_path_buf();
+                // copy path for later use after DB is dropped
+                let path = db.path().to_path_buf();
 
-            // drop DB, releasing RocksDB lock
-            drop(db);
+                // drop DB, releasing RocksDB lock
+                drop(db);
 
-            match self.on_closure {
-                OnClosure::DestroyDB => {
-                    debug!(
-                        "Close Rocksdb storage, destroying database {}",
-                        path.display()
-                    );
-                    if let Err(err) = DB::destroy(&Options::default(), &path) {
-                        error!(
-                            "Failed to destroy Rocksdb database '{}' : {}",
-                            path.display(),
-                            err
+                match self.on_closure {
+                    OnClosure::DestroyDB => {
+                        debug!(
+                            "Close Rocksdb storage, destroying database {}",
+                            path.display()
+                        );
+                        if let Err(err) = DB::destroy(&Options::default(), &path) {
+                            error!(
+                                "Failed to destroy Rocksdb database '{}' : {}",
+                                path.display(),
+                                err
+                            );
+                        }
+                    }
+                    OnClosure::DoNothing => {
+                        debug!(
+                            "Close Rocksdb storage, keeping database {} as it is",
+                            path.display()
                         );
                     }
                 }
-                OnClosure::DoNothing => {
-                    debug!(
-                        "Close Rocksdb storage, keeping database {} as it is",
-                        path.display()
-                    );
-                }
-            }
+            } else {
+                warn!("Tried Dropping DB connection, however D Connection internally was None, Continuing");
+            };
         });
     }
 }
@@ -368,7 +376,8 @@ fn put_kv(
     timestamp: Timestamp,
 ) -> ZResult<StorageInsertionResult> {
     trace!("Put key {:?} in {:?}", key, db);
-    let data_info = encode_data_info(&value.encoding, &timestamp, false)?;
+
+    let data_info = encode_data_info(value.encoding().clone(), &timestamp, false)?;
 
     let key = match key {
         Some(k) => k.to_string(),
@@ -377,11 +386,19 @@ fn put_kv(
     // Write content and encoding+timestamp in different Column Families
     let mut batch = WriteBatch::default();
     batch.put_cf(
-        db.cf_handle(CF_PAYLOADS).unwrap(),
+        db.cf_handle(CF_PAYLOADS).ok_or(zerror!(
+            "Option for ColumFamily {CF_PAYLOADS} was None, cancel put_kv"
+        ))?,
         &key,
-        value.payload.contiguous(),
+        value.payload().into::<Cow<[u8]>>(),
     );
-    batch.put_cf(db.cf_handle(CF_DATA_INFO).unwrap(), &key, data_info);
+    batch.put_cf(
+        db.cf_handle(CF_DATA_INFO).ok_or(zerror!(
+            "Option for ColumFamily {CF_DATA_INFO} was None, cancel put_kv"
+        ))?,
+        &key,
+        data_info,
+    );
 
     match db.write(batch) {
         Ok(()) => Ok(StorageInsertionResult::Inserted),
@@ -398,8 +415,19 @@ fn delete_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<StorageInsertionResu
         Some(k) => k.to_string(),
         None => NONE_KEY.to_string(),
     };
-    batch.delete_cf(db.cf_handle(CF_PAYLOADS).unwrap(), &key);
-    batch.delete_cf(db.cf_handle(CF_DATA_INFO).unwrap(), &key);
+
+    if let Some(cf_payloads) = db.cf_handle(CF_PAYLOADS) {
+        batch.delete_cf(cf_payloads, &key);
+    } else {
+        warn!("Option for ColumFamily {CF_PAYLOADS} was None, continue with delete_kv, ignoring CF_PAYLOADS");
+    }
+
+    if let Some(cf_data_info) = db.cf_handle(CF_DATA_INFO) {
+        batch.delete_cf(cf_data_info, &key);
+    } else {
+        warn!("Option for ColumFamily {CF_DATA_INFO} was None, continue with delete_kv, ignoring CF_DATA_INFO");
+    }
+
     match db.write(batch) {
         Ok(()) => Ok(StorageInsertionResult::Deleted),
         Err(e) => Err(rocksdb_err_to_zerr(e)),
@@ -413,71 +441,92 @@ fn get_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<Option<(Value, Timestam
         Some(k) => k.to_string(),
         None => NONE_KEY.to_string(),
     };
-    match (
-        db.get_cf(db.cf_handle(CF_PAYLOADS).unwrap(), &key),
-        db.get_cf(db.cf_handle(CF_DATA_INFO).unwrap(), &key),
-    ) {
+
+    let (cf_payloads, cf_data_info) = match (db.cf_handle(CF_PAYLOADS), db.cf_handle(CF_DATA_INFO))
+    {
+        (None, None) => {
+            bail!("Option for ColumFamily {CF_PAYLOADS} and {CF_DATA_INFO} were both 'None'")
+        }
+        (None, Some(_)) => bail!("Option for ColumFamily {CF_DATA_INFO} is 'None'"),
+        (Some(_), None) => bail!("Option for ColumFamily {CF_PAYLOADS} is 'None'"),
+        (Some(cf_payloads), Some(cf_data_info)) => (cf_payloads, cf_data_info),
+    };
+
+    match (db.get_cf(cf_payloads, &key), db.get_cf(cf_data_info, &key)) {
         (Ok(Some(payload)), Ok(Some(info))) => {
             trace!("first ok");
             let (encoding, timestamp, deleted) = decode_data_info(&info)?;
+
             if deleted {
                 Ok(None)
             } else {
-                Ok(Some((
-                    Value::new(payload.into()).encoding(encoding),
-                    timestamp,
-                )))
+                Ok(Some((Value::new(payload, encoding), timestamp)))
             }
         }
         (Ok(Some(payload)), Ok(None)) => {
             trace!("second ok");
             // Only the payload is present in DB!
             // Possibly legacy data. Consider as encoding as APP_OCTET_STREAM and create timestamp from now()
-            Ok(Some((
-                Value::new(payload.into()).encoding(KnownEncoding::AppOctetStream.into()),
-                new_reception_timestamp(),
-            )))
+
+            match std::num::NonZeroU128::new(1u128)
+                .map(new_timestamp)
+                .map(|timestamp| {
+                    (
+                        Value::new(payload, Encoding::APPLICATION_OCTET_STREAM),
+                        timestamp,
+                    )
+                })
+                .map(|x| Ok(Some(x)))
+            {
+                Some(x) => x,
+                None => {
+                    bail!("Error Creating Timestamp ID for 0x01");
+                }
+            }
         }
         (Ok(None), _) => Ok(None),
         (Err(err), _) | (_, Err(err)) => Err(rocksdb_err_to_zerr(err)),
     }
 }
 
-fn encode_data_info(encoding: &Encoding, timestamp: &Timestamp, deleted: bool) -> ZResult<Vec<u8>> {
-    let codec = Zenoh080::new();
-    let mut result = vec![];
-    let mut writer = result.writer();
+fn encode_data_info(encoding: Encoding, timestamp: &Timestamp, deleted: bool) -> ZResult<Vec<u8>> {
+    let mut bytes = ZBytes::empty();
+    let mut writer = bytes.writer();
 
-    // note: encode timestamp at first for faster decoding when only this one is required
-    codec
-        .write(&mut writer, timestamp)
+    writer
+        .serialize(timestamp)
         .map_err(|_| zerror!("Failed to encode data-info (timestamp)"))?;
-    codec
-        .write(&mut writer, deleted as u8)
+    writer
+        .serialize(deleted as u8)
         .map_err(|_| zerror!("Failed to encode data-info (deleted)"))?;
-    codec
-        .write(&mut writer, encoding)
+    writer
+        .serialize(&encoding)
         .map_err(|_| zerror!("Failed to encode data-info (encoding)"))?;
-    Ok(result)
+
+    Ok(bytes.into())
 }
 
 fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
-    let codec = Zenoh080::new();
-    let mut reader = buf.reader();
-    let timestamp: Timestamp = codec
-        .read(&mut reader)
+    let bytes = ZBytes::from(buf);
+    let mut reader = bytes.reader();
+
+    let timestamp: Timestamp = reader
+        .deserialize()
         .map_err(|_| zerror!("Failed to decode data-info (timestamp)"))?;
-    let deleted: u8 = codec
-        .read(&mut reader)
+
+    let deleted: u8 = reader
+        .deserialize()
         .map_err(|_| zerror!("Failed to decode data-info (deleted)"))?;
-    let encoding: Encoding = codec
-        .read(&mut reader)
-        .map_err(|_| zerror!("Failed to decode data-info (timestamp)"))?;
+
+    let encoding: Encoding = reader
+        .deserialize()
+        .map_err(|_| zerror!("Failed to decode data-info (Encoding)"))?;
+
     let deleted = deleted != 0;
 
     Ok((encoding, timestamp, deleted))
 }
 
-fn rocksdb_err_to_zerr(err: rocksdb::Error) -> zenoh_core::Error {
+fn rocksdb_err_to_zerr(err: rocksdb::Error) -> Error {
     zerror!("Rocksdb error: {}", err.into_string()).into()
 }
