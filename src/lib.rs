@@ -493,15 +493,9 @@ fn encode_data_info(encoding: Encoding, timestamp: &Timestamp, deleted: bool) ->
     let mut bytes = ZBytes::empty();
     let mut writer = bytes.writer();
 
-    writer
-        .serialize(timestamp)
-        .map_err(|_| zerror!("Failed to encode data-info (timestamp)"))?;
-    writer
-        .serialize(deleted as u8)
-        .map_err(|_| zerror!("Failed to encode data-info (deleted)"))?;
-    writer
-        .serialize(&encoding)
-        .map_err(|_| zerror!("Failed to encode data-info (encoding)"))?;
+    writer.serialize(timestamp);
+    writer.serialize(deleted as u8);
+    writer.serialize(&encoding);
 
     Ok(bytes.into())
 }
