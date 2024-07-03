@@ -14,23 +14,22 @@
 
 use async_std::sync::{Arc, Mutex};
 use async_trait::async_trait;
-use config::VolumeConfig;
 use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch, DB};
-use std::borrow::Cow;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::{borrow::Cow, collections::HashMap, path::PathBuf, time::Duration};
 use tracing::{debug, error, trace, warn};
 use uhlc::NTP64;
-use zenoh::bytes::{Encoding, ZBytes};
-use zenoh::internal::{bail, zenoh_home, zerror, Value};
-use zenoh::key_expr::OwnedKeyExpr;
-use zenoh::query::Parameters;
-// use zenoh::selector::Parameters;
-use zenoh::time::Timestamp;
-use zenoh::{try_init_log_from_env, Error, Result as ZResult};
-use zenoh_backend_traits::config::StorageConfig;
-use zenoh_backend_traits::*;
+use zenoh::{
+    bytes::{Encoding, ZBytes},
+    internal::{bail, zenoh_home, zerror, Value},
+    key_expr::OwnedKeyExpr,
+    query::Parameters,
+    time::Timestamp,
+    try_init_log_from_env, Error, Result as ZResult,
+};
+use zenoh_backend_traits::{
+    config::{StorageConfig, VolumeConfig},
+    *,
+};
 use zenoh_plugin_trait::{plugin_long_version, plugin_version, Plugin};
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
