@@ -466,8 +466,7 @@ fn get_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<Option<(Value, Timestam
         }
         (Ok(_), Ok(None)) => {
             trace!("second ok");
-            // Only the payload is present in DB!
-            // Possibly legacy data. Consider as encoding as APP_OCTET_STREAM and create timestamp from now()
+            warn!("no {CF_DATA_INFO} in database, hoowever payload data exists. Possible Legacy / Dirty state of Database. Unsupported in case of Replication");
             Ok(None)
         }
         (Ok(None), _) => Ok(None),
