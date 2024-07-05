@@ -24,7 +24,7 @@ use zenoh::{
     internal::{bail, zenoh_home, zerror, Value},
     key_expr::OwnedKeyExpr,
     query::Parameters,
-    time::{new_timestamp, Timestamp},
+    time::Timestamp,
     try_init_log_from_env, Error, Result as ZResult,
 };
 use zenoh_backend_traits::{
@@ -464,26 +464,10 @@ fn get_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<Option<(Value, Timestam
                 Ok(Some((Value::new(payload, encoding), timestamp)))
             }
         }
-        (Ok(Some(payload)), Ok(None)) => {
+        (Ok(_), Ok(None)) => {
             trace!("second ok");
-            // Only the payload is present in DB!
-            // Possibly legacy data. Consider as encoding as APP_OCTET_STREAM and create timestamp from now()
-
-            match std::num::NonZeroU128::new(1u128)
-                .map(new_timestamp)
-                .map(|timestamp| {
-                    (
-                        Value::new(payload, Encoding::APPLICATION_OCTET_STREAM),
-                        timestamp,
-                    )
-                })
-                .map(|x| Ok(Some(x)))
-            {
-                Some(x) => x,
-                None => {
-                    bail!("Error Creating Timestamp ID for 0x01");
-                }
-            }
+            warn!("no {CF_DATA_INFO} in database, however payload data exists. Possible Legacy / Dirty state of Database. Unsupported in case of Replication");
+            Ok(None)
         }
         (Ok(None), _) => Ok(None),
         (Err(err), _) | (_, Err(err)) => Err(rocksdb_err_to_zerr(err)),
