@@ -12,11 +12,11 @@
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
 
-use std::{borrow::Cow, collections::HashMap, path::PathBuf, time::Duration};
+use std::{borrow::Cow, collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
-use async_std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch, DB};
+use tokio::sync::Mutex;
 use tracing::{debug, error, trace, warn};
 use uhlc::NTP64;
 use zenoh::{
@@ -32,6 +32,17 @@ use zenoh_backend_traits::{
     *,
 };
 use zenoh_plugin_trait::{plugin_long_version, plugin_version, Plugin};
+
+const WORKER_THREAD_NUM: usize = 2;
+const MAX_BLOCK_THREAD_NUM: usize = 50;
+lazy_static::lazy_static! {
+    static ref TOKIO_RUNTIME: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread()
+               .worker_threads(WORKER_THREAD_NUM)
+               .max_blocking_threads(MAX_BLOCK_THREAD_NUM)
+               .enable_all()
+               .build()
+               .expect("Unable to create runtime");
+}
 
 /// The environement variable used to configure the root of all storages managed by this RocksdbBackend.
 pub const SCOPE_ENV_VAR: &str = "ZENOH_BACKEND_ROCKSDB_ROOT";
@@ -325,47 +336,49 @@ impl Storage for RocksdbStorage {
 
 impl Drop for RocksdbStorage {
     fn drop(&mut self) {
-        async_std::task::block_on(async move {
-            // Get lock on DB and take DB so we can drop it before destroying it
-            // (avoiding RocksDB lock to be taken twice)
-            let mut db_cell = self.db.lock().await;
+        tokio::task::block_in_place(|| {
+            TOKIO_RUNTIME.block_on(async move {
+                // Get lock on DB and take DB so we can drop it before destroying it
+                // (avoiding RocksDB lock to be taken twice)
+                let mut db_cell = self.db.lock().await;
 
-            if let Some(db) = db_cell.take() {
-                // Flush all
-                if let Err(err) = db.flush() {
-                    warn!("Closing Rocksdb storage, flush failed: {}", err);
-                }
+                if let Some(db) = db_cell.take() {
+                    // Flush all
+                    if let Err(err) = db.flush() {
+                        warn!("Closing Rocksdb storage, flush failed: {}", err);
+                    }
 
-                // copy path for later use after DB is dropped
-                let path = db.path().to_path_buf();
+                    // copy path for later use after DB is dropped
+                    let path = db.path().to_path_buf();
 
-                // drop DB, releasing RocksDB lock
-                drop(db);
+                    // drop DB, releasing RocksDB lock
+                    drop(db);
 
-                match self.on_closure {
-                    OnClosure::DestroyDB => {
-                        debug!(
-                            "Close Rocksdb storage, destroying database {}",
-                            path.display()
-                        );
-                        if let Err(err) = DB::destroy(&Options::default(), &path) {
-                            error!(
-                                "Failed to destroy Rocksdb database '{}' : {}",
-                                path.display(),
-                                err
+                    match self.on_closure {
+                        OnClosure::DestroyDB => {
+                            debug!(
+                                "Close Rocksdb storage, destroying database {}",
+                                path.display()
+                            );
+                            if let Err(err) = DB::destroy(&Options::default(), &path) {
+                                error!(
+                                    "Failed to destroy Rocksdb database '{}' : {}",
+                                    path.display(),
+                                    err
+                                );
+                            }
+                        }
+                        OnClosure::DoNothing => {
+                            debug!(
+                                "Close Rocksdb storage, keeping database {} as it is",
+                                path.display()
                             );
                         }
                     }
-                    OnClosure::DoNothing => {
-                        debug!(
-                            "Close Rocksdb storage, keeping database {} as it is",
-                            path.display()
-                        );
-                    }
-                }
-            } else {
-                warn!("Tried Dropping DB connection, however D Connection internally was None, Continuing");
-            };
+                } else {
+                    warn!("Tried Dropping DB connection, however D Connection internally was None, Continuing");
+                };
+            })
         });
     }
 }
