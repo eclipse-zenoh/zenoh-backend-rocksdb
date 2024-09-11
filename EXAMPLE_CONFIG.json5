@@ -1,0 +1,28 @@
+{
+  plugins: {
+    // configuration of "storages" plugin:
+    storage_manager: {
+      volumes: {
+        // configuration of a "rocksdb" volume (the "zenoh_backend_rocksdb" backend library will be loaded at startup)
+        rocksdb: {}
+      },
+      storages: {
+        // configuration of a "demo" storage using the "rocksdb" volume
+        demo: {
+          // the key expression this storage will subscribes to
+          key_expr: "demo/example/**",
+          // this prefix will be stripped from the received key when converting to database key.
+          // i.e.: "demo/example/a/b" will be stored as "a/b"
+          strip_prefix: "demo/example",
+          volume: {
+            id: "rocksdb",
+            // the RocksDB database will be stored in this directory (relative to ${ZENOH_BACKEND_ROCKSDB_ROOT})
+            dir: "example",
+            // create the RocksDB database if not already existing
+            create_db: true
+          }
+        }
+      }
+    },
+  }
+}
