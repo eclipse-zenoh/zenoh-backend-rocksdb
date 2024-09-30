@@ -13,7 +13,7 @@
 //
 
 use std::{
-    borrow::Cow, collections::HashMap, future::Future, path::PathBuf, sync::Arc, time::Duration,
+    collections::HashMap, future::Future, path::PathBuf, sync::Arc, time::Duration,
 };
 
 use async_trait::async_trait;
@@ -33,6 +33,7 @@ use zenoh_backend_traits::{
     config::{StorageConfig, VolumeConfig},
     *,
 };
+use zenoh_ext::{z_deserialize, z_serialize};
 use zenoh_plugin_trait::{plugin_long_version, plugin_version, Plugin};
 
 const WORKER_THREAD_NUM: usize = 2;
@@ -418,7 +419,7 @@ fn put_kv(
             "Option for ColumFamily {CF_PAYLOADS} was None, cancel put_kv"
         ))?,
         &key,
-        value.payload().into::<Cow<[u8]>>(),
+        value.payload().to_bytes(),
     );
     batch.put_cf(
         db.cf_handle(CF_DATA_INFO).ok_or(zerror!(
@@ -502,34 +503,14 @@ fn get_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<Option<(Value, Timestam
 }
 
 fn encode_data_info(encoding: Encoding, timestamp: &Timestamp, deleted: bool) -> ZResult<Vec<u8>> {
-    let mut bytes = ZBytes::empty();
-    let mut writer = bytes.writer();
-
-    writer.serialize(timestamp);
-    writer.serialize(deleted as u8);
-    writer.serialize(&encoding);
-
-    Ok(bytes.into())
+    let bytes = z_serialize(&(encoding, deleted, timestamp));
+    Ok(bytes.to_bytes().into_owned())
 }
 
 fn decode_data_info(buf: &[u8]) -> ZResult<(Encoding, Timestamp, bool)> {
     let bytes = ZBytes::from(buf);
-    let mut reader = bytes.reader();
-
-    let timestamp: Timestamp = reader
-        .deserialize()
-        .map_err(|_| zerror!("Failed to decode data-info (timestamp)"))?;
-
-    let deleted: u8 = reader
-        .deserialize()
-        .map_err(|_| zerror!("Failed to decode data-info (deleted)"))?;
-
-    let encoding: Encoding = reader
-        .deserialize()
-        .map_err(|_| zerror!("Failed to decode data-info (Encoding)"))?;
-
-    let deleted = deleted != 0;
-
+    let (encoding, deleted, timestamp) = z_deserialize(&bytes)
+        .map_err(|_| zerror!("Failed to decode data-info (encoding, deleted, timestamp)"))?;
     Ok((encoding, timestamp, deleted))
 }
 
