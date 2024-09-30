@@ -12,9 +12,7 @@
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
 
-use std::{
-    collections::HashMap, future::Future, path::PathBuf, sync::Arc, time::Duration,
-};
+use std::{collections::HashMap, future::Future, path::PathBuf, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch, DB};
