@@ -505,7 +505,7 @@ struct DataInfo {
     pub encoding: Encoding,
 }
 
-type DataInfoTuple = (u64, [u8; 16], u16, bool, Vec<u8>);
+type DataInfoTuple = (u64, [u8; 16], bool, u16, Vec<u8>);
 
 impl DataInfo {
     pub fn as_tuple(&self) -> DataInfoTuple {
@@ -521,13 +521,13 @@ impl DataInfo {
         (
             timestamp_time,
             timestamp_id,
-            encoding_id,
             deleted,
+            encoding_id,
             encoding_schema,
         )
     }
     pub fn from_tuple(
-        (timestamp_time, timestamp_id, encoding_id, deleted, encoding_schema): DataInfoTuple,
+        (timestamp_time, timestamp_id, deleted, encoding_id, encoding_schema): DataInfoTuple,
     ) -> ZResult<Self> {
         let timestamp_id = TimestampId::try_from(timestamp_id)?;
         let timestamp = Timestamp::new(NTP64(timestamp_time), timestamp_id);
