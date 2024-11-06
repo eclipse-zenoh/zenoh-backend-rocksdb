@@ -20,7 +20,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, trace, warn};
 use zenoh::{
     bytes::{Encoding, ZBytes},
-    internal::{bail, buffers::ZSlice, zenoh_home, zerror, Value},
+    internal::{bail, buffers::ZSlice, zenoh_home, zerror},
     key_expr::OwnedKeyExpr,
     query::Parameters,
     time::{Timestamp, TimestampId, NTP64},
@@ -243,7 +243,8 @@ impl Storage for RocksdbStorage {
     async fn put(
         &mut self,
         key: Option<OwnedKeyExpr>,
-        value: Value,
+        payload: ZBytes,
+        encoding: Encoding,
         timestamp: Timestamp,
     ) -> ZResult<StorageInsertionResult> {
         // Get lock on DB
@@ -260,7 +261,7 @@ impl Storage for RocksdbStorage {
         );
         if !self.read_only {
             // put payload and data_info in DB
-            put_kv(db, key, value, timestamp)
+            put_kv(db, key, payload, encoding, timestamp)
         } else {
             warn!("Received PUT for read-only DB on {:?} - ignored", key);
             Err("Received update for read-only DB".into())
@@ -304,7 +305,11 @@ impl Storage for RocksdbStorage {
         // Get the matching key/value
         debug!("getting key `{:?}` with parameters `{}`", key, _parameters);
         match get_kv(db, key.clone()) {
-            Ok(Some((value, timestamp))) => Ok(vec![StoredData { value, timestamp }]),
+            Ok(Some((payload, encoding, timestamp))) => Ok(vec![StoredData {
+                payload,
+                encoding,
+                timestamp,
+            }]),
             Ok(None) => Ok(vec![]),
             Err(e) => Err(format!("Error when getting key {:?} : {}", key, e).into()),
         }
@@ -398,12 +403,13 @@ impl Drop for RocksdbStorage {
 fn put_kv(
     db: &DB,
     key: Option<OwnedKeyExpr>,
-    value: Value,
+    payload: ZBytes,
+    encoding: Encoding,
     timestamp: Timestamp,
 ) -> ZResult<StorageInsertionResult> {
     trace!("Put key {:?} in {:?}", key, db);
 
-    let data_info = encode_data_info(value.encoding().clone(), &timestamp, false)?;
+    let data_info = encode_data_info(encoding, &timestamp, false)?;
 
     let key = match key {
         Some(k) => k.to_string(),
@@ -416,7 +422,7 @@ fn put_kv(
             "Option for ColumFamily {CF_PAYLOADS} was None, cancel put_kv"
         ))?,
         &key,
-        value.payload().to_bytes(),
+        payload.to_bytes(),
     );
     batch.put_cf(
         db.cf_handle(CF_DATA_INFO).ok_or(zerror!(
@@ -460,7 +466,7 @@ fn delete_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<StorageInsertionResu
     }
 }
 
-fn get_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<Option<(Value, Timestamp)>> {
+fn get_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<Option<(ZBytes, Encoding, Timestamp)>> {
     trace!("Get key {:?} from {:?}", key, db);
     // TODO: use MultiGet when available (see https://github.com/rust-rocksdb/rust-rocksdb/issues/485)
     let key = match key {
@@ -486,7 +492,7 @@ fn get_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<Option<(Value, Timestam
             if deleted {
                 Ok(None)
             } else {
-                Ok(Some((Value::new(payload, encoding), timestamp)))
+                Ok(Some((payload.into(), encoding, timestamp)))
             }
         }
         (Ok(_), Ok(None)) => {
