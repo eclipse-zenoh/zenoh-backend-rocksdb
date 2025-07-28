@@ -3035,7 +3035,7 @@ dependencies = [
 
 [[package]]
 name = "zenoh-backend-rocksdb"
-version = "1.4.0"
+version = "1.4.0-28-gc45b296"
 dependencies = [
  "async-trait",
  "git-version",
