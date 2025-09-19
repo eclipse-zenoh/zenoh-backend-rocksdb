@@ -32,6 +32,7 @@ use zenoh_backend_traits::{
 };
 use zenoh_ext::{z_deserialize, z_serialize};
 use zenoh_plugin_trait::{plugin_long_version, plugin_version, Plugin};
+use zenoh_util::ffi::JsonValue;
 
 const WORKER_THREAD_NUM: usize = 2;
 const MAX_BLOCK_THREAD_NUM: usize = 50;
@@ -134,8 +135,8 @@ pub struct RocksdbVolume {
 
 #[async_trait]
 impl Volume for RocksdbVolume {
-    fn get_admin_status(&self) -> serde_json::Value {
-        self.admin_status.clone()
+    fn get_admin_status(&self) -> JsonValue {
+        (&self.admin_status).into()
     }
 
     fn get_capability(&self) -> Capability {
@@ -146,7 +147,8 @@ impl Volume for RocksdbVolume {
     }
 
     async fn create_storage(&self, config: StorageConfig) -> ZResult<Box<dyn Storage>> {
-        let volume_cfg = match config.volume_cfg.as_object() {
+        let cfg = config.volume_cfg.into_serde_value();
+        let volume_cfg = match cfg.as_object() {
             Some(v) => v,
             None => bail!("rocksdb backed storages need volume-specific configurations"),
         };
@@ -235,8 +237,8 @@ struct RocksdbStorage {
 
 #[async_trait]
 impl Storage for RocksdbStorage {
-    fn get_admin_status(&self) -> serde_json::Value {
-        self.config.to_json_value()
+    fn get_admin_status(&self) -> JsonValue {
+        self.config.to_json_value().into()
     }
 
     // When receiving a PUT operation
