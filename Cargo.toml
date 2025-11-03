@@ -13,7 +13,7 @@
 #
 [package]
 name = "zenoh-backend-rocksdb"
-version = "1.6.1"
+version = "1.6.2"
 repository = "https://github.com/eclipse-zenoh/zenoh-backend-rocksdb"
 homepage = "http://zenoh.io"
 authors = [
@@ -50,13 +50,13 @@ zenoh = { features = [
   "unstable",
   "internal",
   "plugins",
-], version = "1.6.1", git = "https://github.com/eclipse-zenoh/zenoh.git" , branch = "main" }
+], version = "1.6.2", git = "https://github.com/eclipse-zenoh/zenoh.git", branch = "main" }
 
-zenoh_backend_traits = { version = "1.6.1", git = "https://github.com/eclipse-zenoh/zenoh.git" , branch = "main" }
-zenoh-plugin-trait = { version = "1.6.1", git = "https://github.com/eclipse-zenoh/zenoh.git" , branch = "main" }
-zenoh-ext = { version = "1.6.1", git = "https://github.com/eclipse-zenoh/zenoh.git" , branch = "main" }
-zenoh-pinned-deps-1-75 = { version = "1.6.1", git = "https://github.com/eclipse-zenoh/zenoh.git" , branch = "main" }
-zenoh-util = { version = "1.6.1", git = "https://github.com/eclipse-zenoh/zenoh.git" , branch = "main" }
+zenoh_backend_traits = { version = "1.6.2", git = "https://github.com/eclipse-zenoh/zenoh.git", branch = "main" }
+zenoh-plugin-trait = { version = "1.6.2", git = "https://github.com/eclipse-zenoh/zenoh.git", branch = "main" }
+zenoh-ext = { version = "1.6.2", git = "https://github.com/eclipse-zenoh/zenoh.git", branch = "main" }
+zenoh-pinned-deps-1-75 = { version = "1.6.2", git = "https://github.com/eclipse-zenoh/zenoh.git", branch = "main" }
+zenoh-util = { version = "1.6.2", git = "https://github.com/eclipse-zenoh/zenoh.git", branch = "main" }
 librocksdb-sys = "=0.17.1"
 
 
@@ -69,4 +69,4 @@ maintainer = "zenoh-dev@eclipse.org"
 copyright = "2022 ZettaScale Technology"
 section = "net"
 license-file = ["LICENSE", "0"]
-depends = "zenoh-plugin-storage-manager (=1.6.1)"
+depends = "zenoh-plugin-storage-manager (=1.6.2)"
