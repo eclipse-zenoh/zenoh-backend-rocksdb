@@ -13,7 +13,7 @@
 #
 [package]
 name = "zenoh-backend-rocksdb"
-version = "1.10.1"
+version = "1.10.1-4-g39634a4"
 repository = "https://github.com/eclipse-zenoh/zenoh-backend-rocksdb"
 homepage = "http://zenoh.io"
 authors = [
