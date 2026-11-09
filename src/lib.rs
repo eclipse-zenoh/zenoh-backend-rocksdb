@@ -497,7 +497,7 @@ fn get_kv(db: &DB, key: Option<OwnedKeyExpr>) -> ZResult<Option<(ZBytes, Encodin
                 Ok(Some((payload.into(), encoding, timestamp)))
             }
         }
-        (Ok(_), Ok(None)) => {
+        (Ok(Some(_)), Ok(None)) => {
             trace!("second ok");
             warn!("no {CF_DATA_INFO} in database, however payload data exists. Possible Legacy / Dirty state of Database. Unsupported in case of Replication");
             Ok(None)
